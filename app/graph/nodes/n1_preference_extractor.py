@@ -1,0 +1,82 @@
+"""N1 Preference Extractor.
+
+라우터가 분리해낸 "선호 관련 텍스트"를 Vocabulary 매핑된 구조화 선호로 변환한다.
+"""
+
+from typing import Literal
+
+from pydantic import BaseModel, Field, create_model
+
+from app.core.llm import get_llm
+from app.graph.preference_state import PreferenceState
+from app.prompts.n1_preference_extractor import SYSTEM_PROMPT, USER_TEMPLATE
+from app.schemas.preference import ExtractedPreference, MappingType, Sentiment, Strength
+from app.services.vocabulary_client import VocabularyEntry, fetch_vocabulary
+
+
+def _build_extraction_schema(vocabulary: list[VocabularyEntry]) -> type[BaseModel]:
+    """Vocabulary에 없는 code를 LLM이 임의로 만들지 못하도록 code 필드를 Literal로 동적 제약한다.
+
+    UNMAPPED(대응 code 없음)도 유효한 결과이므로 None을 함께 허용한다.
+    """
+    codes = [entry.code for entry in vocabulary]
+    code_type = (Literal[tuple(codes)] | None) if codes else (str | None)  # type: ignore[valid-type]
+
+    extracted_item = create_model(
+        "ExtractedPreferenceItem",
+        vocabulary_code=(
+            code_type,
+            Field(description="Vocabulary 목록에 존재하는 code. UNMAPPED면 null."),
+        ),
+        raw_value=(str, ...),
+        sentiment=(Sentiment, ...),
+        strength=(Strength, ...),
+        mapping_type=(MappingType, ...),
+    )
+    return create_model(
+        "ExtractionResult",
+        preferences=(list[extracted_item], Field(default_factory=list)),
+    )
+
+
+def _format_vocabulary(vocabulary: list[VocabularyEntry]) -> str:
+    lines = [
+        f"- {entry.code} (domain={entry.domain}, attribute={entry.attribute}, "
+        f"parentCode={entry.parent_code})"
+        for entry in vocabulary
+    ]
+    return "\n".join(lines) if lines else "(비어있음)"
+
+
+async def extract_preferences(text: str) -> list[ExtractedPreference]:
+    vocabulary = await fetch_vocabulary()
+    schema = _build_extraction_schema(vocabulary)
+
+    llm = get_llm().with_structured_output(schema)
+    system = SYSTEM_PROMPT.format(vocabulary=_format_vocabulary(vocabulary))
+    user = USER_TEMPLATE.format(message=text)
+
+    result = await llm.ainvoke(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+    )
+
+    return [
+        ExtractedPreference(
+            vocabulary_code=item.vocabulary_code,
+            raw_value=item.raw_value,
+            sentiment=item.sentiment,
+            strength=item.strength,
+            mapping_type=item.mapping_type,
+        )
+        for item in result.preferences
+    ]
+
+
+async def extract_preferences_node(state: PreferenceState) -> dict:
+    preference_text = state.get("preference_text")
+    if not preference_text:
+        return {"preferences": []}
+    return {"preferences": await extract_preferences(preference_text)}
