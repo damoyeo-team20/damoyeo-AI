@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     # LangSmith
     langsmith_tracing: bool = False
     langsmith_api_key: str = ""
-    langsmith_project: str = "damoyeo-ai"
+    langsmith_project: str = ""
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
 
 
 @lru_cache
@@ -33,9 +34,18 @@ def get_settings() -> Settings:
 
 
 def configure_langsmith(settings: Settings | None = None) -> None:
+    """`.env`는 pydantic-settings로만 읽히고 os.environ에는 반영되지 않으므로,
+    langsmith/langchain 라이브러리가 직접 읽는 환경변수로 명시적으로 옮겨줘야 트레이싱이 켜진다.
+    """
     settings = settings or get_settings()
     if not settings.langsmith_tracing:
         return
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+    os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+    os.environ["LANGSMITH_ENDPOINT"] = settings.langsmith_endpoint
+    # 구버전 langchain 트레이싱 경로 호환용.
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
     os.environ["LANGCHAIN_API_KEY"] = settings.langsmith_api_key
     os.environ["LANGCHAIN_PROJECT"] = settings.langsmith_project
+    os.environ["LANGCHAIN_ENDPOINT"] = settings.langsmith_endpoint

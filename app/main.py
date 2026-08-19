@@ -2,7 +2,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.routes import api_router
+from app.core.config import configure_langsmith
 from app.core.errors import AIServiceError
+
+configure_langsmith()
 
 app = FastAPI(title="damoyeo-ai")
 app.include_router(api_router)
