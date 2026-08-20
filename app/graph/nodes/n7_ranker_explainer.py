@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.errors import AIServiceError
 from app.core.llm import get_llm
 from app.graph.state import CandidatesState, VerifiedPlace
@@ -98,6 +99,7 @@ async def rank_and_explain(state: CandidatesState) -> dict:
     result: _RankingResult = await llm.ainvoke(
         [{"role": "system", "content": system}, {"role": "user", "content": "최대 3개를 골라줘."}]
     )
+    record_debug("n7_ranker_explainer", result)  # TEMP DEBUG
 
     requested_codes = {p.vocabulary_code for p in preferences}
     domain_by_code = await _domains_by_code(requested_codes)

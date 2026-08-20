@@ -6,6 +6,7 @@
 
 from pydantic import BaseModel
 
+from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.preference_state import PreferenceState
 from app.prompts.n1_message_router import SYSTEM_PROMPT, USER_TEMPLATE
@@ -26,6 +27,7 @@ async def route_message(state: PreferenceState) -> dict:
             {"role": "user", "content": user},
         ]
     )
+    record_debug("n1_message_router", result)  # TEMP DEBUG
 
     return {
         "preference_text": result.preference_text,

@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.nodes.l3_slot_builder import build_slot
 from app.prompts.schedule import SYSTEM_PROMPT
@@ -35,14 +36,13 @@ async def resolve_schedule(request: ScheduleRequest) -> ScheduleResponse:
     llm = get_llm().with_structured_output(_build_decision_schema(request.common_available_dates))
 
     system = SYSTEM_PROMPT.format(
-        common_available_dates=[
-            f"{d.isoformat()} ({d.strftime('%A')})" for d in request.common_available_dates
-        ],
+        common_available_dates=[d.isoformat() for d in request.common_available_dates],
         preferred_time_of_day=request.preferred_time_of_day.value,
     )
     result = await llm.ainvoke(
         [{"role": "system", "content": system}, {"role": "user", "content": "날짜를 골라줘."}]
     )
+    record_debug("n3_schedule_resolver", result)  # TEMP DEBUG
 
     chosen_date = date.fromisoformat(result.chosen_date)
     start_at, end_at = build_slot(

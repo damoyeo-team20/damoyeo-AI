@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.core.config import get_settings
+from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import extract_text_content, get_llm
 from app.graph.state import CandidatesState, PlaceCandidate, VerifiedPlace
 from app.prompts.n6_research_subagent import CLASSIFY_SYSTEM_PROMPT, SEARCH_PROMPT
@@ -39,6 +40,9 @@ async def _verify_one(
     # 임시 우회: Gemini google_search 할당량 문제로 테스트가 막혀서, 검증 자체를 건너뛰고
     # 항상 UNKNOWN으로 둔다 (거짓 PASS/FAIL을 만들지 않음 — 기존 3-state를 그대로 활용).
     if get_settings().skip_business_hours_verification:
+        record_debug(  # TEMP DEBUG
+            "n6_research_subagent", {"place": place["name"], "skipped": True}
+        )
         return {
             "activity": place["activity"],
             "kakao_place_id": place["kakao_place_id"],
@@ -75,8 +79,16 @@ async def _verify_one(
                 search_result=search_text,
             )
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("영업 검증 실패: %s", place["name"])
+        record_debug(  # TEMP DEBUG
+            "n6_research_subagent", {"place": place["name"], "error": repr(exc)}
+        )
+    else:
+        record_debug(  # TEMP DEBUG
+            "n6_research_subagent",
+            {"place": place["name"], "search_text": search_text, "classification": classification.model_dump()},
+        )
 
     return {
         "activity": place["activity"],

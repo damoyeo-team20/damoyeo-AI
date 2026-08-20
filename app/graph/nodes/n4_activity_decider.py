@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.state import ActivityPlan, CandidatesState
 from app.prompts.n4_activity_decider import SYSTEM_PROMPT
@@ -51,6 +52,7 @@ async def decide_activities(state: CandidatesState) -> dict:
     result: _ActivityDecision = await llm.ainvoke(
         [{"role": "system", "content": system}, {"role": "user", "content": "활동을 결정해줘."}]
     )
+    record_debug("n4_activity_decider", result)  # TEMP DEBUG
 
     if result.status == "CONFLICT":
         return {

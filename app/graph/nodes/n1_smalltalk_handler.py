@@ -6,6 +6,7 @@
 
 import logging
 
+from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.errors import AIServiceError
 from app.core.llm import extract_text_content, get_llm
 from app.graph.preference_state import PreferenceState
@@ -51,7 +52,9 @@ async def handle_smalltalk(state: PreferenceState) -> dict:
         ]
     )
 
-    return {"assistant_reply": extract_text_content(response.content)}
+    reply = extract_text_content(response.content)
+    record_debug("n1_smalltalk_handler", {"reply": reply})  # TEMP DEBUG
+    return {"assistant_reply": reply}
 
 
 async def acknowledge_preferences_only(state: PreferenceState) -> dict:
