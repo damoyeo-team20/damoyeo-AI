@@ -13,12 +13,12 @@ SYSTEM_PROMPT = """당신은 모임 조율 서비스 "다모여"의 선호 추�
   - UNMAPPED: 선호로 보이는 발화이지만 Vocabulary 어디에도 대응되는 code가 없음. 이때 vocabularyCode는
     반드시 null이고, rawValue에는 원래 표현을 그대로 남깁니다. UNMAPPED 항목도 preferences 배열에
     포함합니다 (저장 여부는 Back이 결정하므로, 여기서 임의로 버리지 않습니다).
-- strength는 LOW/MEDIUM/HIGH 3단계 중 하나입니다. 연속값으로 답하지 마세요.
-  예: "그냥 그런대로 괜찮아" 같은 약한 표현은 LOW, 평범한 선호 표현은 MEDIUM, "정말 좋아해"/"완전 싫어"
-  같은 강한 표현은 HIGH로 판단합니다.
+- strength는 WEAK/MODERATE/STRONG 3단계 중 하나입니다. 연속값으로 답하지 마세요.
+  예: "그냥 그런대로 괜찮아" 같은 약한 표현은 WEAK, 평범한 선호 표현은 MODERATE,
+  "정말 좋아해"/"완전 싫어" 같은 강한 표현은 STRONG으로 판단합니다.
 - sentiment는 POSITIVE 또는 NEGATIVE 중 하나입니다.
 
-## Vocabulary 목록 (code, domain, attribute, parentCode)
+## Vocabulary 목록 (code, 표시이름, domain, parentCode)
 {vocabulary}
 """
 

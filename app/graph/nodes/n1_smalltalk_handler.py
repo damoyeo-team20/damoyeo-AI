@@ -30,14 +30,14 @@ def _extract_text(content: object) -> str:
 
 
 def _format_domains(vocabulary: list[VocabularyEntry]) -> str:
-    """domain/attribute만 주면 LLM이 그 안의 구체 예시(code)를 지어내므로, 실제 code를 몇 개씩 함께 보여준다."""
-    groups: dict[tuple[str, str], list[str]] = {}
+    """domain만 주면 LLM이 그 안의 구체 예시를 지어내므로, 실제 등록된 표시 이름을 몇 개씩 함께 보여준다."""
+    groups: dict[str, list[str]] = {}
     for entry in vocabulary:
-        groups.setdefault((entry.domain, entry.attribute), []).append(entry.code)
+        groups.setdefault(entry.domain, []).append(entry.display_name)
 
     lines = [
-        f"- domain={domain}, attribute={attribute}, 실제 code 예시: {', '.join(codes[:5])}"
-        for (domain, attribute), codes in sorted(groups.items())
+        f"- domain={domain}, 실제 항목 예시: {', '.join(names[:5])}"
+        for domain, names in sorted(groups.items())
     ]
     return "\n".join(lines) if lines else "(비어있음)"
 
@@ -66,3 +66,13 @@ async def handle_smalltalk(state: PreferenceState) -> dict:
     )
 
     return {"assistant_reply": _extract_text(response.content)}
+
+
+async def acknowledge_preferences_only(state: PreferenceState) -> dict:
+    """잡담 없이 선호 문장만 있을 때 채우는 완료 통보.
+
+    handle_smalltalk와 목적이 다르다 — 대화를 이어가려는 게 아니라 "처리했다"는 통보라 고정 문구면
+    충분하고, LLM 호출도 필요 없다. handle_smalltalk의 폴백(잡담 없으면 전체 메시지를 잡담으로 취급)을
+    여기서까지 타게 두면 순수 선호 문장에 엉뚱한 잡담 반응이 나올 수 있어 경로를 분리했다.
+    """
+    return {"assistant_reply": "말씀해주신 내용을 선호에 반영했어요."}

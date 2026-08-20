@@ -41,7 +41,7 @@ def _build_extraction_schema(vocabulary: list[VocabularyEntry]) -> type[BaseMode
 
 def _format_vocabulary(vocabulary: list[VocabularyEntry]) -> str:
     lines = [
-        f"- {entry.code} (domain={entry.domain}, attribute={entry.attribute}, "
+        f"- {entry.code} ({entry.display_name}, domain={entry.domain}, "
         f"parentCode={entry.parent_code})"
         for entry in vocabulary
     ]
@@ -50,6 +50,7 @@ def _format_vocabulary(vocabulary: list[VocabularyEntry]) -> str:
 
 async def extract_preferences(text: str) -> list[ExtractedPreference]:
     vocabulary = await fetch_vocabulary()
+    vocabulary_by_code = {entry.code: entry for entry in vocabulary}
     schema = _build_extraction_schema(vocabulary)
 
     llm = get_llm().with_structured_output(schema)
@@ -63,16 +64,21 @@ async def extract_preferences(text: str) -> list[ExtractedPreference]:
         ]
     )
 
-    return [
-        ExtractedPreference(
-            vocabulary_code=item.vocabulary_code,
-            raw_value=item.raw_value,
-            sentiment=item.sentiment,
-            strength=item.strength,
-            mapping_type=item.mapping_type,
+    preferences = []
+    for item in result.preferences:
+        entry = vocabulary_by_code.get(item.vocabulary_code)
+        preferences.append(
+            ExtractedPreference(
+                vocabulary_code=item.vocabulary_code,
+                display_name=entry.display_name if entry else None,
+                domain=entry.domain if entry else None,
+                raw_value=item.raw_value,
+                sentiment=item.sentiment,
+                strength=item.strength,
+                mapping_type=item.mapping_type,
+            )
         )
-        for item in result.preferences
-    ]
+    return preferences
 
 
 async def extract_preferences_node(state: PreferenceState) -> dict:
