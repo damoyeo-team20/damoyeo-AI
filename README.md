@@ -84,7 +84,7 @@ flowchart LR
 
 ### AI 파이프라인
 
-파일명은 `{n|l}_{도메인}_{역할}.py` 규칙을 따릅니다. `n_`은 LLM 노드, `l_`은 비-LLM(결정론적) 노드이고, 도메인 단어(`preference`/`context`/`schedule`/`candidate`)는 실제 API 경로와 그대로 맞춥니다 — 번호는 쓰지 않습니다. 기능별 API로 나뉘어 있으며, 각 요청 안에서 필요한 분기·검증만 그래프로 처리합니다. **날짜 교집합 계산, 시간 슬롯 계산, 후보 코드 필터링처럼 "정답이 하나로 정해지는 계산"은 전부 코드가 하고, LLM은 자연어 이해·판단·설명에만 쓰입니다.** LLM이 목록 밖의 값(존재하지 않는 날짜, Vocabulary에 없는 코드 등)을 답하지 못하도록 응답 스키마 자체를 `Literal`로 동적 제약하는 것이 파이프라인 전반의 핵심 안전장치입니다.
+파일명은 `{n|l}_{도메인}_{역할}.py` 규칙을 따릅니다. `n_`은 LLM 노드, `l_`은 비-LLM(결정론적) 노드이고, 도메인 단어(`preference`/`context`/`schedule`/`candidate`)는 실제 API 경로와 그대로 맞춥니다 — 번호는 쓰지 않습니다. 기능별 API로 나뉘어 있으며, 각 요청 안에서 필요한 분기·검증만 그래프로 처리합니다. **날짜 교집합 계산, 시간 슬롯 계산, 후보 코드 필터링처럼 "정답이 하나로 정해지는 계산"은 전부 코드가 하고, LLM은 자연어 이해·판단·설명에만 쓰입니다.** 날짜처럼 후보가 작은 값은 동적 `Literal`로 제한하고, 전체 Vocabulary(현재 seed 320개)의 코드는 단순 문자열로 받은 뒤 AI 서버가 실제 사전과 대조해 미등록 값을 `UNMAPPED`로 정규화합니다.
 
 ```mermaid
 flowchart LR
@@ -156,7 +156,7 @@ flowchart TD
 | 노드 | 역할 | 비고 | 파일 |
 | --- | --- | --- | --- |
 | Preference Scope Router | 개인 선호 입력 범위인지 `IN_SCOPE / OUT_OF_SCOPE`로 분류 | 자체 추출·응답 없이 분기만 담당 | `app/graph/nodes/n_preference_router.py` |
-| Preference Extractor | `IN_SCOPE` 입력에서 개인 선호를 Vocabulary 코드로 매핑 | 응답 스키마의 `vocabulary_code`를 실제 Vocabulary 목록으로 `Literal` 제약 — 없는 코드는 `UNMAPPED`(`null`)로만 나올 수 있음 | `app/graph/nodes/n_preference_extractor.py` |
+| Preference Extractor | `IN_SCOPE` 입력에서 개인 선호를 Vocabulary 코드로 매핑 | LLM의 문자열 code를 실제 Vocabulary와 대조하고, 없는 코드는 `UNMAPPED`(`null`)로 정규화 | `app/graph/nodes/n_preference_extractor.py` |
 | Preference Guardrail | `OUT_OF_SCOPE` 또는 추출 결과가 없는 입력을 개인 선호 입력으로 다시 유도 | LLM 없이 고정 안내 반환 | `app/graph/nodes/l_preference_guardrail.py` |
 | Context Scope Router | 발화를 `IN_SCOPE / OUT_OF_SCOPE / DATE_CHANGE`로 분류 | `DATE_CHANGE`는 `candidateDates`가 있을 때만 출력 가능 | `app/graph/nodes/n_context_router.py` |
 | Context Guardrail | 모임 목적 범위 밖 입력을 목적·분위기·활동 입력으로 다시 유도 | LLM 없이 고정 안내를 반환하고 날짜 후보는 그대로 보존 | `app/graph/nodes/l_context_guardrail.py` |
@@ -172,7 +172,7 @@ flowchart TD
 ### 설계 원칙
 
 - **LLM은 판단, 코드는 계산.** 날짜 교집합·시간 슬롯·태그의 사실 판정처럼 정답이 하나로 정해지는 값은 전부 결정론적 코드가 만든다. LLM은 "왜 이 후보가 적합한가" 같은 자연어 판단·설명에만 관여한다.
-- **환각 원천 차단.** LLM이 고를 수 있는 값(날짜, Vocabulary 코드 등)을 매 요청마다 동적으로 만든 `Literal` 타입으로 응답 스키마 자체에 박아 넣는다 — 목록 밖의 값은 파싱 단계에서부터 나올 수 없다.
+- **허용값은 서버가 최종 통제한다.** 날짜처럼 작은 후보 집합은 동적 `Literal`로 제한한다. Vocabulary는 전체 code(현재 seed 320개)를 enum으로 만들지 않고 `string | null`로 받은 뒤 실제 사전에 없는 값을 서버가 `UNMAPPED`와 `null`로 바꾼다.
 - **자유형 입력은 먼저 범위를 확인한다.** 개인 선호와 모임 목적 채팅은 공통적으로 `IN_SCOPE / OUT_OF_SCOPE`를 판별하고, 범위 밖 입력에는 잡담을 이어가지 않고 화면 목적에 맞는 고정 안내를 반환한다.
 - **AI는 상태를 저장하지 않는다.** 대화 이력, 이전에 보여준 장소 목록 등 이전 호출의 맥락이 필요한 값은 Back이 매 요청마다 통째로 다시 보낸다.
 - **전용 재생성 API 없음.** "재생성"은 제품 흐름상 "뒤로가기"로 단순화됐다 — Back이 `/context/messages`로 되돌아가 다시 대화하고 `/context` → `/schedule` → `/candidates`를 다시 호출한다.
@@ -226,7 +226,8 @@ Preference Agent(`n_preference_*` 노드)와 백엔드 간 역할은 명확히 �
 
 ```
 Backend → Vocabulary 관리 / 저장 / 검증
-Agent   → 자연어 이해 / Preference 추출 / Vocabulary 매핑
+LLM     → 자연어 이해 / Preference 추출 / Vocabulary 매핑
+AI 서버 → code 실존 검증 / UNMAPPED 정규화 / 표시 정보 보강
 ```
 
 Agent는 백엔드가 제공하는 Vocabulary 목록(`code`, `domain`, `parentCode`로 계층 표현)을 기준으로 사용자 발화를 매핑합니다.
@@ -234,19 +235,19 @@ Agent는 백엔드가 제공하는 Vocabulary 목록(`code`, `domain`, `parentCo
 ```json
 {
   "extractedPreferences": [
-    { "vocabularyCode": "MEAT", "displayName": "고기", "domain": "FOOD", "rawValue": "고기", "sentiment": "POSITIVE", "strength": "MODERATE", "mappingType": "EXACT" },
-    { "vocabularyCode": "SEAFOOD", "displayName": "회", "domain": "FOOD", "rawValue": "회", "sentiment": "NEGATIVE", "strength": "STRONG", "mappingType": "EXACT" },
-    { "vocabularyCode": null, "displayName": null, "domain": null, "rawValue": "말고기", "sentiment": "POSITIVE", "strength": "WEAK", "mappingType": "UNMAPPED" }
+    { "vocabularyCode": "MEAT", "displayName": "육류", "domain": "FOOD", "rawValue": "사슴고기", "sentiment": "POSITIVE", "strength": "MODERATE", "mappingType": "GENERALIZED" },
+    { "vocabularyCode": "RAW_FISH", "displayName": "회", "domain": "FOOD", "rawValue": "회", "sentiment": "NEGATIVE", "strength": "STRONG", "mappingType": "EXACT" },
+    { "vocabularyCode": null, "displayName": null, "domain": null, "rawValue": "고수", "sentiment": "NEGATIVE", "strength": "STRONG", "mappingType": "UNMAPPED" }
   ],
   "reply": "말씀해주신 내용을 선호에 반영했어요."
 }
 ```
 
-- **EXACT**: 사용자 표현이 Vocabulary와 직접 대응 (예: "회 싫어" → `SEAFOOD`)
+- **EXACT**: 사용자 표현이 Vocabulary와 직접 대응 (예: "회 싫어" → `RAW_FISH`)
 - **GENERALIZED**: 정확한 Vocabulary가 없어 안전한 상위 개념으로 매핑, `rawValue`는 원문 보존
-- **UNMAPPED**: 대응 가능한 Vocabulary가 없음 (`vocabularyCode = null`, 예: "말고기"). 장기 저장 여부는 Back이 결정
+- **UNMAPPED**: 대응 가능한 Vocabulary가 없음 (`vocabularyCode = null`, 예: "고수"). Back은 일반 선호 DB와 Front 응답에서 제외
 
-Agent는 Vocabulary에 없는 새로운 code를 절대 임의로 생성하지 않습니다 — 응답 스키마 자체가 실제 Vocabulary 코드 목록으로 동적 제약되어 있어 구조적으로 불가능합니다.
+Gemini가 Vocabulary에 없는 code를 생성하더라도 AI 서버가 실제 목록과 대조해 `UNMAPPED`로 정규화하므로, 미등록 code가 외부 응답으로 전달되지는 않습니다.
 
 ## 기술 스택
 

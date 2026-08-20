@@ -58,7 +58,7 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
 | --- | --- |
 | 파일 | `app/graph/nodes/n_preference_extractor.py` |
 | 입력 | 가드레일을 통과한 `message` 전체 |
-| 방식 | LLM 구조화 출력. 응답 스키마의 `vocabularyCode` 필드를 **매 요청마다 실제 Vocabulary 코드 목록으로 동적 `Literal` 제약** — 목록에 없는 코드는 애초에 출력될 수 없다 |
+| 방식 | LLM 내부 DTO의 `vocabulary_code`(외부 alias `vocabularyCode`)를 `string \| null`로 받고, AI 서버가 실제 Vocabulary와 대조해 미등록 code를 `UNMAPPED`/`null`로 정규화 |
 | 출력 | `preferences: ExtractedPreference[]` |
 
 먼저 Back의 `GET /internal/preference-vocabulary`를 호출해 현재 Vocabulary 전체(`code`, `domain`, `displayName`, `parentCode`)를 가져옵니다. 프롬프트(`app/prompts/n_preference_extractor.py`)에 이 목록을 통째로 넣고 규칙을 줍니다.
@@ -68,11 +68,11 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
 | Specificity 매핑 | 포괄적 발언("해산물은 별로야")은 상위 카테고리 code로, 구체적 발언("조개는 좋아")은 leaf code로 — 그래야 "해산물 싫은데 조개는 좋아" 같은 예외가 서로 다른 code로 저장돼 충돌하지 않는다 |
 | `mappingType=EXACT` | 발화가 Vocabulary code와 직접 대응 |
 | `mappingType=GENERALIZED` | 더 구체적인 leaf가 없어 상위 code로 매핑. `rawValue`는 원래 표현 그대로 보존 |
-| `mappingType=UNMAPPED` | 대응되는 code가 Vocabulary 어디에도 없음. `vocabularyCode`는 반드시 `null`. 이 항목도 배열에서 버리지 않고 그대로 포함 (저장 여부는 Back이 결정) |
+| `mappingType=UNMAPPED` | 대응되는 code가 Vocabulary 어디에도 없음. `vocabularyCode`는 반드시 `null`. AI 응답에는 포함하고 Back은 일반 선호 저장·Front 응답에서 제외 |
 | `strength` | `WEAK`/`MODERATE`/`STRONG` 3단계만 (연속값 금지) |
 | `sentiment` | `POSITIVE`/`NEGATIVE` |
 
-출력 항목마다 코드가 있으면 `display_name`/`domain`은 **LLM이 아니라 서버가** 방금 조회한 Vocabulary에서 그대로 찾아 붙입니다 (LLM 산출값 아님). `UNMAPPED`면 둘 다 `null`.
+전체 Vocabulary(현재 seed 320개)를 JSON Schema의 거대한 enum으로 만들지는 않습니다. 목록은 의미 판단을 위해 프롬프트에 유지하되, Gemini에는 code를 단순 문자열로 받습니다. 출력 항목마다 서버가 code를 실제 Vocabulary에서 조회하고, 존재하면 `display_name`/`domain`을 원본에서 붙입니다. 존재하지 않거나 모델이 `UNMAPPED`로 반환한 code는 `vocabularyCode`/`displayName`/`domain`을 모두 `null`로 만들고 `mappingType=UNMAPPED`로 정규화합니다.
 
 ### 1.3 Preference Guardrail — 비-LLM
 

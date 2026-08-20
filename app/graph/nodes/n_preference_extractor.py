@@ -3,9 +3,7 @@
 가드레일을 통과한 입력에서 개인 선호만 골라 Vocabulary 매핑된 구조로 변환한다.
 """
 
-from typing import Literal
-
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field
 
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
@@ -15,29 +13,24 @@ from app.schemas.preference import ExtractedPreference, MappingType, Sentiment, 
 from app.services.vocabulary_client import VocabularyEntry, fetch_vocabulary
 
 
-def _build_extraction_schema(vocabulary: list[VocabularyEntry]) -> type[BaseModel]:
-    """Vocabulary에 없는 code를 LLM이 임의로 만들지 못하도록 code 필드를 Literal로 동적 제약한다.
+class _ExtractedPreferenceItem(BaseModel):
+    """Gemini가 반환하는 내부 DTO.
 
-    UNMAPPED(대응 code 없음)도 유효한 결과이므로 None을 함께 허용한다.
+    Vocabulary 전체를 JSON Schema enum으로 만들지 않는다. code 실존 여부와 UNMAPPED 정규화는
+    응답을 받은 뒤 AI 서버가 현재 Vocabulary를 기준으로 수행한다.
     """
-    codes = [entry.code for entry in vocabulary]
-    code_type = (Literal[tuple(codes)] | None) if codes else (str | None)  # type: ignore[valid-type]
 
-    extracted_item = create_model(
-        "ExtractedPreferenceItem",
-        vocabulary_code=(
-            code_type,
-            Field(description="Vocabulary 목록에 존재하는 code. UNMAPPED면 null."),
-        ),
-        raw_value=(str, ...),
-        sentiment=(Sentiment, ...),
-        strength=(Strength, ...),
-        mapping_type=(MappingType, ...),
+    vocabulary_code: str | None = Field(
+        description="Vocabulary 목록의 code. 대응되는 항목이 없으면 null."
     )
-    return create_model(
-        "ExtractionResult",
-        preferences=(list[extracted_item], Field(default_factory=list)),
-    )
+    raw_value: str
+    sentiment: Sentiment
+    strength: Strength
+    mapping_type: MappingType
+
+
+class _ExtractionResult(BaseModel):
+    preferences: list[_ExtractedPreferenceItem] = Field(default_factory=list)
 
 
 def _format_vocabulary(vocabulary: list[VocabularyEntry]) -> str:
@@ -52,9 +45,8 @@ def _format_vocabulary(vocabulary: list[VocabularyEntry]) -> str:
 async def extract_preferences(text: str) -> list[ExtractedPreference]:
     vocabulary = await fetch_vocabulary()
     vocabulary_by_code = {entry.code: entry for entry in vocabulary}
-    schema = _build_extraction_schema(vocabulary)
 
-    llm = get_llm().with_structured_output(schema)
+    llm = get_llm().with_structured_output(_ExtractionResult)
     system = SYSTEM_PROMPT.format(vocabulary=_format_vocabulary(vocabulary))
     user = USER_TEMPLATE.format(message=text)
 
@@ -68,16 +60,21 @@ async def extract_preferences(text: str) -> list[ExtractedPreference]:
 
     preferences = []
     for item in result.preferences:
-        entry = vocabulary_by_code.get(item.vocabulary_code)
+        entry = (
+            vocabulary_by_code.get(item.vocabulary_code)
+            if item.vocabulary_code is not None
+            else None
+        )
+        is_mapped = entry is not None and item.mapping_type != MappingType.UNMAPPED
         preferences.append(
             ExtractedPreference(
-                vocabulary_code=item.vocabulary_code,
-                display_name=entry.display_name if entry else None,
-                domain=entry.domain if entry else None,
+                vocabulary_code=entry.code if is_mapped else None,
+                display_name=entry.display_name if is_mapped else None,
+                domain=entry.domain if is_mapped else None,
                 raw_value=item.raw_value,
                 sentiment=item.sentiment,
                 strength=item.strength,
-                mapping_type=item.mapping_type,
+                mapping_type=item.mapping_type if is_mapped else MappingType.UNMAPPED,
             )
         )
     return preferences

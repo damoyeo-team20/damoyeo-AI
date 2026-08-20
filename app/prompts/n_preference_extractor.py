@@ -13,7 +13,7 @@ SYSTEM_PROMPT = """당신은 모임 조율 서비스 "다모여"의 선호 추�
   - GENERALIZED: 더 구체적인 leaf가 없어 상위 code로 매핑 (rawValue는 원래 표현 그대로 보존)
   - UNMAPPED: 선호로 보이는 발화이지만 Vocabulary 어디에도 대응되는 code가 없음. 이때 vocabularyCode는
     반드시 null이고, rawValue에는 원래 표현을 그대로 남깁니다. UNMAPPED 항목도 preferences 배열에
-    포함합니다 (저장 여부는 Back이 결정하므로, 여기서 임의로 버리지 않습니다).
+    포함합니다 (Back이 일반 선호 저장·Front 응답에서 제외하므로, 여기서 임의로 버리지 않습니다).
 - strength는 WEAK/MODERATE/STRONG 3단계 중 하나입니다. 연속값으로 답하지 마세요.
   예: "그냥 그런대로 괜찮아" 같은 약한 표현은 WEAK, 평범한 선호 표현은 MODERATE,
   "정말 좋아해"/"완전 싫어" 같은 강한 표현은 STRONG으로 판단합니다.

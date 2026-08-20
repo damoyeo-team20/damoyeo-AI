@@ -14,7 +14,7 @@ class Sentiment(str, Enum):
 class MappingType(str, Enum):
     EXACT = "EXACT"
     GENERALIZED = "GENERALIZED"
-    # 대응되는 Vocabulary code가 없음. vocabularyCode는 null. 장기 저장 여부는 Back이 결정.
+    # 대응되는 Vocabulary code가 없음. Back은 일반 선호 DB·Front 응답에서 제외한다.
     UNMAPPED = "UNMAPPED"
 
 

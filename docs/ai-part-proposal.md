@@ -118,7 +118,7 @@ MeetingState
 
 **N1. Preference Extractor**
 - 입력: 사용자 발화, 백엔드가 제공하는 Vocabulary 목록
-- 출력: **6장의 Vocabulary 계약을 따른다** (`vocabularyCode, rawValue, sentiment, strength, mappingType`). Agent는 Vocabulary에 없는 code를 새로 만들지 않는다.
+- 출력: **6장의 Vocabulary 계약을 따른다** (`vocabularyCode, rawValue, sentiment, strength, mappingType`). 모델이 미등록 code를 반환하면 AI 서버가 `UNMAPPED`/`null`로 정규화하므로 외부 응답에는 미등록 code가 남지 않는다.
 - 호출 시점: 온보딩 1회 + 선호 추가·수정 시
 
 **N2. Meeting Context Parser**
@@ -159,7 +159,7 @@ MeetingState
 
 초기 설계(`ai-pipeline-design.md`)는 "자유 target + scope(broad/specific) + parent_hint" 방식을 검토했으나, 이후 백엔드 팀과 **고정 Vocabulary + mappingType** 방식으로 최종 합의했다. 아래가 실제로 구현해야 할 계약이다.
 
-**역할 분리**: 백엔드는 Vocabulary 관리/저장/검증, Agent는 자연어 이해·Preference 추출·Vocabulary 매핑만 한다.
+**역할 분리**: 백엔드는 Vocabulary 관리/저장/검증, LLM은 자연어 이해·Preference 추출·Vocabulary 매핑, AI 서버 코드는 모델 code의 실존 여부 검증·`UNMAPPED` 정규화·메타데이터 보강을 담당한다.
 
 **Backend → Agent**: 사용자 텍스트 + Vocabulary 목록(`GET /internal/preference-vocabulary`, `{code, domain, displayName, parentCode}`로 계층 표현). 초안에 있던 `attribute`는 확정된 DB 스키마에 없어 제외했고, 계층은 `parentCode` 하나로만 표현한다.
 
@@ -175,9 +175,9 @@ MeetingState
 
 - **EXACT**: 표현이 Vocabulary와 직접 대응 ("돼지고기 좋아" → `PORK`)
 - **GENERALIZED**: 정확한 코드가 없어 안전한 상위 개념으로 매핑 ("양고기 좋아"인데 `LAMB` 없으면 → `MEAT`, `rawValue`는 보존)
-- **UNMAPPED**: 대응 코드 없음 (`vocabularyCode=null`). 장기 저장 여부는 미정.
+- **UNMAPPED**: 대응 코드 없음 (`vocabularyCode=null`). Back은 일반 선호 DB와 Front 응답에서 제외한다.
 
-**핵심 규칙**: Agent는 Vocabulary에 없는 code를 절대 새로 만들지 않는다. 백엔드는 저장 전 코드 실존 여부·`sentiment`/`strength`/`mappingType` 유효성·`UNMAPPED`일 때 `vocabularyCode==null`인지 검증한다.
+**핵심 규칙**: LLM에는 Vocabulary에 있는 code만 선택하도록 지시한다. AI 서버는 모델 응답을 실제 Vocabulary와 대조해 미등록 code를 `UNMAPPED`/`null`로 정규화하며, 백엔드도 저장 전 코드 실존 여부·`sentiment`/`strength`/`mappingType` 유효성·`UNMAPPED`일 때 `vocabularyCode==null`인지 재검증한다.
 
 **가장 중요한 원칙**: Vocabulary는 Agent가 이해할 수 있는 범위가 아니라 **장기 저장할 Preference의 범위만** 제한한다. 지금 모임(Room)의 자연어("오늘 양고기 먹고 싶어")나 장소 검색 키워드는 Vocabulary 제약 없이 자유롭게 쓴다.
 
@@ -222,7 +222,7 @@ AI 서버는 DB에 직접 접근하지 않는다. 백엔드가 조회해 요청 
 | 컨텍스트 과다 (모임별 선호 저장 시) | 0819 오전 회의: "컨텍스트가 너무 커질 수 있음" | category 5~6개 고정으로 N4에 관련 카테고리만 프롬프트에 주입 (6장) |
 | 자동 예약 증명 불가 | "예약 어떻게 할지…" (service-proposal.md), AI 피드백의 "가장 위험한 질문" | 아직 미해결 — 12장 오픈 이슈 |
 | 전원 가입/캘린더 연동 강제 시 서비스 실패 | AI 피드백: "전원 가입과 권한 허용을 전제로 하면 서비스가 실패" | 연결 사용자는 Free/Busy만 제공, 미연결 참가자는 링크에서 수동 입력 — 단, 0819 이후 "가입을 무조건 해야 되는 상황"이라는 팀 논의도 있어 최종 확정 필요 (12장) |
-| Vocabulary 없는 표현 처리 | 신조어·방언 등 | GENERALIZED/UNMAPPED로 안전하게 처리, 임의 코드 생성 금지 (6장) |
+| Vocabulary 없는 표현 처리 | 신조어·방언 등 | GENERALIZED/UNMAPPED로 처리하고 미등록 code는 서버가 `UNMAPPED`/`null`로 정규화 (6장) |
 | N6 영업시간 검증 타임아웃 | 외부 API 응답 지연 시 전체 파이프라인 지연 | 전체 타임아웃 + UNKNOWN 상태로 부분 반환 (5장) |
 
 ---
@@ -265,7 +265,7 @@ AI 서버는 DB에 직접 접근하지 않는다. 백엔드가 조회해 요청 
 3. **L3(시간 교집합) 계산 주체**: `ai-pipeline-design.md`는 이걸 AI 파이프라인의 비-LLM 노드로 그렸지만, `service-proposal.md`의 기술 스택 표는 "백엔드(Spring Boot): 캘린더 시간 교집합 계산"이라고 되어 있다. AI 서비스가 직접 계산하는지, 백엔드가 계산한 결과를 받아오기만 하는지 확정 필요.
 4. **모임별 개인 선호 저장 여부**: 0819 오전 회의에서 "구현해보고 안되면 수정"으로 결론 — 아직 최종 결정 아님.
 5. **참가자 가입 필수 여부**: AI 피드백은 "가입 없이 응답 가능"을 권고했으나, 이후 팀 논의에서 "가입을 무조건 해야 되는 상황"이라는 이야기도 나왔음 — 최종 확정 필요.
-6. **UNMAPPED를 장기 Preference로 저장할지**: 백엔드 계약(6장)에서 미정으로 남겨둔 사항.
+6. ~~**UNMAPPED를 장기 Preference로 저장할지**~~ → **해결됨.** Back은 일반 선호 DB와 Front 응답에서 제외한다.
 7. ~~**`db_schema.md` 미작성**~~ → 작성 완료. 스키마에 맞춰 코드를 정렬했다 (Vocabulary `attribute` 제거·`displayName` 추가, ID를 BIGINT로, `confirmedSlot`을 `confirmed_start_at/end_at` 기준 datetime으로, N2 UI 입력을 `region`/`schedule_search_from,to`/`preferred_time_of_day`로, `strength`를 `WEAK/MODERATE/STRONG`으로).
 8. **재탐색(N8) 중간 상태의 영속화 위치**: 후보 제시 → 피드백 → 재탐색이 여러 API 호출에 걸쳐 일어난다면 `MeetingState`가 요청 사이에 어디 남아있는지 명시 필요 (예: LangGraph checkpointer를 `meeting_id` 기준으로 사용).
 9. **`meeting_chat_messages` / `meeting_memories` 연동 — 보류**: DB에는 대화 원문과 일정별 압축 기억(JSONB)을 저장하는 테이블이 있고, "다음 일정 조율 시 과거 대화 원문 전체가 아니라 같은 그룹의 `meeting_memories.memory`를 우선 전달한다"고 명시돼 있다. 하지만 현재 AI 엔드포인트에는 이 기억을 받는 필드가 없다. 이 서비스의 차별점인 "축적되는 컨텍스트"와 직결되므로 언젠가는 설계해야 하지만, **DB 설정이 끝난 뒤로 미뤄둔 상태다.**

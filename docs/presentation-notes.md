@@ -8,11 +8,11 @@
 
 ### 발표에서 먼저 말할 한 문장
 
-> 생성형 AI가 저장 카테고리를 자유롭게 만들게 하지 않고, 서비스가 미리 관리하는 계층형 Vocabulary 안에서만 의미상 가장 적합한 코드를 선택하도록 답의 범위를 제한했다.
+> 생성형 AI에는 미리 관리하는 계층형 Vocabulary를 기준으로 코드를 선택하게 하고, 최종 결과는 AI 서버가 실제 사전과 대조해 미등록 코드를 `UNMAPPED`/`null`로 정규화한다.
 
 여기서 중요한 점은 **“가장 가까운 단어”를 수학적으로 검색하는 방식은 아니라는 것**이다. 현재 구현에는 임베딩, 코사인 유사도, 편집거리, 벡터 데이터베이스가 없다. 정확한 표현은 다음과 같다.
 
-> 고정 Vocabulary를 후보군으로 제공한 뒤 LLM이 문맥을 해석해 코드를 선택하고, 구조화 출력 스키마가 후보군 밖의 코드 생성을 막는 **폐쇄형 의미 분류** 방식이다.
+> 고정 Vocabulary를 후보군으로 제공한 뒤 LLM이 문맥을 해석해 문자열 코드를 선택하고, AI 서버가 allowlist 검증으로 후보군 밖의 코드를 `UNMAPPED`로 정규화하는 **폐쇄형 의미 분류** 방식이다.
 
 LLM이 의미를 판단하는 능력은 사용하되, DB에 저장할 수 있는 값의 범위는 서비스가 통제하는 구조다.
 
@@ -123,9 +123,9 @@ flowchart LR
     A["사용자 자연어"] --> B["선호 범위 판별"]
     B -->|IN_SCOPE| C["Back Vocabulary 조회"]
     B -->|OUT_OF_SCOPE| G["고정 입력 안내"]
-    C --> D["허용 code로 동적 스키마 생성"]
-    D --> E["LLM 의미 매핑"]
-    E --> F["서버가 displayName·domain 보강"]
+    C --> D["LLM 의미 매핑\ncode: string | null"]
+    D --> E["서버 allowlist 검증\nunknown → UNMAPPED"]
+    E --> F["displayName·domain 보강"]
     F --> H["Back이 검증·저장"]
 ```
 
@@ -152,25 +152,27 @@ AI는 seed SQL이나 DB를 직접 읽지 않는다. Back의 내부 Vocabulary AP
 | --- | --- |
 | Back | Vocabulary의 원본 관리, 사용자 식별, 검증, DB 저장·UPSERT |
 | LLM | 자연어에서 선호를 찾고 의미상 적절한 코드·감정·강도·매핑 유형 판단 |
-| AI 서버 코드 | LLM이 선택할 수 있는 코드 제한, `displayName`·`domain` 파생 |
+| AI 서버 코드 | 모델 code의 allowlist 검증·정규화, `displayName`·`domain` 파생 |
 
-#### 4단계: 현재 사전으로 출력 스키마를 동적으로 만든다
+#### 4단계: 거대한 enum 대신 고정 크기 스키마로 받는다
 
-예를 들어 Back이 현재 다음 세 코드만 반환했다고 가정한다.
-
-```text
-SEAFOOD, RAW_FISH, SALMON
-```
-
-AI 서버는 LLM의 `vocabularyCode` 필드를 개념적으로 다음과 같이 제한한다.
+초기 구현은 Back이 반환한 전체 code를 Gemini 구조화 출력의 enum으로 만들었다.
 
 ```python
-Literal["SEAFOOD", "RAW_FISH", "SALMON"] | None
+Literal[전체 Vocabulary 320개] | None
 ```
 
-따라서 LLM이 `SALMON_FOOD`나 `FISH_CATEGORY`처럼 그럴듯하지만 존재하지 않는 코드를 만들면 정상적인 구조화 출력으로 통과할 수 없다. “없는 코드를 만들지 마라”는 프롬프트 지시만 쓰는 것이 아니라, **응답 타입 자체로 허용값을 제한**한 것이다.
+Vocabulary가 작을 때는 모델이 목록 밖 코드를 생성하지 못하게 하는 간단한 방식이었다. 하지만 Back에서 사전을 320개로 확장하자 동일한 320개 code가 프롬프트뿐 아니라 JSON Schema enum에도 모두 들어가 스키마가 불필요하게 커졌다. 해결 방법은 RDS의 사전을 줄이는 것이 아니라 **모델 스키마와 최종 검증의 책임을 분리하는 것**이다.
 
-이 안전장치가 보장하는 것은 **코드의 존재 여부**다. 선택된 코드가 문맥상 가장 정확한지까지 보장하는 것은 아니다.
+현재 Gemini 내부 DTO는 고정 크기로 유지한다.
+
+```python
+vocabulary_code: str | None
+```
+
+320개 Vocabulary 목록은 의미 판단을 위해 프롬프트에 그대로 유지한다. 제거한 것은 데이터가 아니라 JSON Schema에 중복되던 거대한 enum이다.
+
+이제 LLM이 `SALMON_FOOD`나 `FISH_CATEGORY`처럼 미등록 코드를 내부 응답으로 만들 가능성은 있다. 대신 AI 서버가 응답 직후 `vocabulary_by_code`에서 정확히 조회하고, 없는 code를 외부 API로 내보내지 않는다.
 
 #### 5단계: LLM이 문맥을 해석한다
 
@@ -192,16 +194,24 @@ LLM은 전체 Vocabulary의 표시명·domain·계층을 보고 다음 값을 �
 
 부정 표현, 강도, 넓은 선호와 구체적인 예외를 문장 전체의 의미로 해석하는 부분은 LLM이 담당한다.
 
-#### 6단계: 기준 데이터는 서버가 다시 붙인다
+#### 6단계: 서버가 실존 여부를 검증하고 기준 데이터를 붙인다
 
-LLM은 `displayName`과 `domain`을 직접 생성하지 않는다. LLM이 고른 `vocabularyCode`로 AI 서버가 캐시된 원본 Vocabulary를 조회해 붙인다.
+LLM은 `displayName`과 `domain`을 직접 생성하지 않는다. LLM이 고른 `vocabularyCode`로 AI 서버가 캐시된 원본 Vocabulary를 조회한다.
 
 ```text
 LLM 선택: SALMON
-서버 조회: displayName=연어, domain=FOOD
+→ 실제 사전에 존재
+→ vocabularyCode=SALMON, displayName=연어, domain=FOOD 유지
+
+LLM 선택: SALMON_FOOD
+→ 실제 사전에 없음
+→ vocabularyCode=null, displayName=null, domain=null,
+  mappingType=UNMAPPED로 정규화
 ```
 
-이렇게 하면 모델이 `SALMON`을 골라 놓고 표시명은 “광어”, domain은 `ACTIVITY`라고 답하는 식의 필드 간 흔들림을 줄일 수 있다.
+모델이 code를 `null`로 반환했거나, 실존 code와 `mappingType=UNMAPPED`를 함께 반환한 경우도 동일하게 `UNMAPPED`/`null`로 정규화한다. 서버가 `EXACT`와 `GENERALIZED` 중 하나를 임의로 추측하지 않는 fail-closed 정책이다.
+
+이렇게 하면 모델이 `SALMON`을 골라 놓고 표시명은 “광어”, domain은 `ACTIVITY`라고 답하는 식의 필드 간 흔들림을 막고, 미등록 non-null code가 AI API 경계를 통과하지 않게 할 수 있다.
 
 #### 7단계: Back이 최종 검증하고 저장한다
 
@@ -289,7 +299,7 @@ AI는 추출 결과만 반환한다. 어떤 사용자의 선호인지 식별하�
 
 #### 4. LLM의 환각 범위를 줄인다
 
-LLM이 새로운 저장 코드를 자유롭게 만드는 것을 막고, 표시명과 domain은 원본 사전에서 파생한다.
+LLM이 미등록 코드를 제안하더라도 서버가 `UNMAPPED`로 정규화하고, 표시명과 domain은 원본 사전에서 파생한다.
 
 #### 5. 정보 손실을 완화한다
 
@@ -297,7 +307,7 @@ LLM이 새로운 저장 코드를 자유롭게 만드는 것을 막고, 표시�
 
 #### 6. 서비스 간 책임이 명확해진다
 
-자연어 이해는 LLM, 허용값 제약과 메타데이터 보강은 AI 서버 코드, 원본 관리와 영속화는 Back이 담당한다.
+자연어 이해는 LLM, allowlist 검증·정규화와 메타데이터 보강은 AI 서버 코드, 원본 관리와 영속화는 Back이 담당한다.
 
 ### 1.8 현재 구현의 한계와 개선 방향
 
@@ -305,7 +315,7 @@ LLM이 새로운 저장 코드를 자유롭게 만드는 것을 막고, 표시�
 
 #### 1. 의미 매핑 정확도는 아직 정량 검증하지 않았다
 
-동적 `Literal`은 없는 코드 생성을 막지만, `SALMON`과 `RAW_FISH` 중 어느 것이 문맥상 더 적합한지는 LLM 판단이다. 현재 테스트는 mock LLM 결과를 중심으로 하며, 실제 사용자 발화 데이터셋으로 code 정확도·감정·강도를 측정하지 않았다.
+서버 후처리는 미등록 code가 외부로 나가는 것은 막지만, `SALMON`과 `RAW_FISH`처럼 둘 다 실존하는 code 중 어느 것이 문맥상 더 적합한지는 LLM 판단이다. 현재 테스트는 mock LLM 결과를 중심으로 하며, 실제 사용자 발화 데이터셋으로 code 정확도·감정·강도를 측정하지 않았다.
 
 개선하려면 최소한 다음 평가셋이 필요하다.
 
@@ -325,18 +335,16 @@ LLM이 새로운 저장 코드를 자유롭게 만드는 것을 막고, 표시�
 
 다음 단계에서는 선택 코드와 `mappingType`의 관계를 검증하거나, leaf 후보를 먼저 찾고 실패했을 때 실제 ancestor만 허용하는 규칙을 코드로 옮길 수 있다.
 
-#### 3. Vocabulary가 비면 허용 코드 제약이 풀린다
+#### 3. Vocabulary가 비면 모든 code가 `UNMAPPED`가 된다
 
-현재 구현은 Vocabulary가 비어 있으면 `Literal` 대신 `str | None`을 사용한다. 정상 운영 계약은 최소 한 개의 Vocabulary를 요구하지만, 실제 응답이 빈 배열일 때 fail-closed하지 않고 임의 문자열을 받을 가능성이 있다.
+새 구조에서는 Vocabulary가 비어 있으면 모델이 어떤 code를 반환해도 서버 조회에 실패하므로 최종 결과는 모두 `UNMAPPED`가 된다. 미등록 code가 유출되지는 않지만, 사전 조회 장애가 정상적인 “매핑 불가” 결과처럼 보일 수 있다.
 
-안전한 방식은 빈 Vocabulary를 의존성 장애로 보고 Extractor 호출 전에 `VOCABULARY_UNAVAILABLE`로 종료하는 것이다.
+운영 계약은 최소 한 개의 Vocabulary를 요구하므로, 더 명확한 방식은 빈 목록을 의존성 장애로 보고 Extractor 호출 전에 `VOCABULARY_UNAVAILABLE`로 종료하는 것이다.
 
 #### 4. 필드 간 불변식 검증이 충분하지 않다
 
-현재 타입만으로는 다음 잘못된 조합을 완전히 차단하지 못한다.
+서버 정규화로 code와 `UNMAPPED` 사이의 모순은 해소한다. 다만 다음 문제는 아직 남는다.
 
-- `UNMAPPED`인데 `vocabularyCode`가 존재함
-- `EXACT`인데 `vocabularyCode`가 `null`임
 - 같은 `vocabularyCode`가 한 응답에 여러 번 등장함
 - `GENERALIZED`인데 선택 코드가 실제 상위 범주가 아님
 
@@ -354,7 +362,7 @@ HTTP 조회 결과는 캐시하지만 전체 Vocabulary 텍스트는 Extractor �
 
 ```text
 1차: domain 또는 관련 상위 범주 선택
-2차: 해당 범주의 leaf만 동적 Literal 후보로 제공
+2차: 해당 범주의 leaf만 프롬프트 후보로 제공
 ```
 
 이때 임베딩은 최종 결정을 대신하는 것이 아니라, 큰 사전에서 후보를 좁히는 검색 단계로 사용할 수 있다. 최종 코드 선택과 allowlist 검증은 그대로 유지해야 한다.
@@ -381,13 +389,17 @@ HTTP 조회 결과는 캐시하지만 전체 Vocabulary 텍스트는 Extractor �
 
 ### 1.10 발표용 1분 설명 초안
 
-> 사용자는 같은 선호를 매우 다르게 표현하지만, 그 원문을 그대로 저장하면 여러 사람의 취향을 비교하거나 같은 선호를 갱신하기 어렵습니다. 반대로 카테고리까지 LLM이 자유롭게 만들게 하면 매번 다른 코드가 생겨 Back과 DB가 안정적으로 사용할 수 없습니다. 그래서 음식·활동·분위기·음료 영역의 계층형 Vocabulary를 먼저 구성하고, LLM은 그 목록 안에서만 의미상 적합한 코드를 고르게 했습니다. 직접 대응하면 EXACT, 정확한 항목은 없지만 안전한 상위 개념이 있으면 GENERALIZED, 억지로 묶으면 의미가 달라지는 경우에는 UNMAPPED로 남깁니다. 또한 실제 코드 목록으로 동적 Literal 스키마를 만들어 사전에 없는 코드는 정상 응답으로 통과하지 못하게 했고, 표시명과 domain은 LLM이 아니라 서버가 원본 사전에서 다시 붙입니다. 즉 자연어 판단은 AI에 맡기되, 저장 가능한 값과 기준 데이터는 시스템이 통제한 설계입니다.
+> 사용자는 같은 선호를 매우 다르게 표현하지만, 그 원문을 그대로 저장하면 여러 사람의 취향을 비교하거나 같은 선호를 갱신하기 어렵습니다. 반대로 카테고리까지 LLM이 자유롭게 만들게 하면 매번 다른 코드가 생겨 Back과 DB가 안정적으로 사용할 수 없습니다. 그래서 음식·활동·분위기·음료 영역의 계층형 Vocabulary를 먼저 구성하고, LLM은 그 목록을 기준으로 의미상 적합한 코드를 고르게 했습니다. 직접 대응하면 EXACT, 정확한 항목은 없지만 안전한 상위 개념이 있으면 GENERALIZED, 억지로 묶으면 의미가 달라지는 경우에는 UNMAPPED로 남깁니다. 320개를 거대한 enum 스키마로 중복하지 않고 code는 문자열로 받은 뒤, AI 서버가 실제 사전과 대조해 미등록 값을 UNMAPPED와 null로 정규화합니다. 표시명과 domain도 LLM이 아니라 서버가 원본 사전에서 붙입니다. 즉 자연어 판단은 AI에 맡기되, 저장 가능한 값과 기준 데이터는 시스템이 통제한 설계입니다.
 
 ### 1.11 예상 질문과 답변
 
 **Q. 결국 LLM이 고르는 거라면 잘못 매핑할 수도 있지 않나요?**
 
-그렇다. 동적 스키마는 존재하지 않는 코드 생성을 막는 장치이지 의미 정확도를 100% 보장하는 장치는 아니다. 그래서 구조적 안전성과 의미 정확도를 분리해 보고, 다음 단계로 실제 발화 평가셋과 필드 간 validator가 필요하다.
+그렇다. 서버 allowlist 검증은 미등록 코드 유출을 막는 장치이지 의미 정확도를 100% 보장하는 장치는 아니다. 그래서 구조적 안전성과 의미 정확도를 분리해 보고, 다음 단계로 실제 발화 평가셋과 계층 검증이 필요하다.
+
+**Q. 320개를 그대로 두면서 왜 `Literal`만 제거했나요?**
+
+문제는 RDS의 데이터 수가 아니라 320개 code가 Gemini JSON Schema enum에 한 번 더 들어가는 구조였다. 의미 판단에 필요한 목록은 프롬프트에 유지하고, 스키마는 `string | null`로 고정한 뒤 서버의 딕셔너리 조회로 외부 API 경계의 allowlist 보장을 수행한다. 사전 확장성과 모델 스키마 안정성을 분리한 것이다.
 
 **Q. 왜 임베딩으로 가장 가까운 카테고리를 찾지 않았나요?**
 
@@ -410,9 +422,9 @@ Extractor는 두 값을 서로 다른 계층 코드로 보존해 후속 로직�
 - Vocabulary seed와 계층: `data/vocabulary_seed.sql`, `data/vocabulary_seed_additions.sql`, `data/vocabulary_seed_additions_2.sql`
 - Back Vocabulary 조회·캐시: `app/services/vocabulary_client.py`
 - 입력 범위 판별: `app/graph/nodes/n_preference_router.py`, `app/prompts/n_preference_router.py`
-- 동적 `Literal`과 추출 후 보강: `app/graph/nodes/n_preference_extractor.py`
+- allowlist 검증·정규화와 메타데이터 보강: `app/graph/nodes/n_preference_extractor.py`
 - 매핑 지침: `app/prompts/n_preference_extractor.py`
-- 출력 Enum과 DTO: `app/schemas/preference.py`
+- 출력 DTO와 고정 Enum(`sentiment`, `strength`, `mappingType`): `app/schemas/preference.py`
 - 그래프 분기: `app/graph/build_preference_graph.py`
 - 저장 구조: `docs/db_schema.md`
 - Back↔AI 최종 계약: `docs/api-design2-backend.md`

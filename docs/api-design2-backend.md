@@ -187,6 +187,8 @@ Back이 제공하고 AI가 호출한다. Request body는 없다.
 - 입력이 개인 선호 범위 밖이면 `extractedPreferences`는 `[]`이고, `reply`로 음식·음주·분위기·활동
   선호를 입력하도록 고정 안내한다. 잡담을 이어가지는 않는다.
 - 입력이 선호 범위 안이라고 분류됐더라도 실제 선호를 추출하지 못하면 같은 고정 안내를 반환한다.
+- AI는 모델의 `vocabularyCode`를 `string | null`로 받은 뒤 현재 Vocabulary와 대조한다. 존재하지 않는
+  code는 `mappingType=UNMAPPED`와 `vocabularyCode=null`로 정규화한다.
 - `displayName`과 `domain`은 `vocabularyCode`로 Vocabulary에서 조회한 값이다.
 - `UNMAPPED`이면 `vocabularyCode`, `displayName`, `domain`이 모두 `null`이다.
 - non-null `vocabularyCode`, `displayName`, `domain`은 각각 100자, 100자, 50자 이하다.
