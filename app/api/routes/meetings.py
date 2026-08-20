@@ -2,7 +2,6 @@ from fastapi import APIRouter
 
 from app.graph.build_graph import get_candidates_graph
 from app.graph.nodes.n2_context_parser import finalize_meeting_context, generate_context_reply
-from app.graph.nodes.n8_revision_router import route_revision
 from app.schemas.candidates import CandidatesRequest, CandidatesResponse, CandidatesStatus
 from app.schemas.meeting_context import (
     ContextFinalizeRequest,
@@ -10,7 +9,6 @@ from app.schemas.meeting_context import (
     ContextMessageRequest,
     ContextMessageResponse,
 )
-from app.schemas.revise import ReviseRequest, ReviseResponse
 
 router = APIRouter(prefix="/ai/meetings/{meeting_id}", tags=["meetings"])
 
@@ -58,8 +56,3 @@ async def get_candidates(meeting_id: int, payload: CandidatesRequest) -> Candida
         excluded=result.get("excluded", []),
         verification_timed_out=result.get("verification_timed_out", False),
     )
-
-
-@router.post("/revise", response_model=ReviseResponse)
-async def revise(meeting_id: int, payload: ReviseRequest) -> ReviseResponse:
-    return await route_revision(payload.feedback, payload.current_candidates)

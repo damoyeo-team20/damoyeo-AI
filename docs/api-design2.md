@@ -924,7 +924,6 @@ AI 내부 결과에는 DB 저장 전이므로 `suggestionId`가 없다. Back이 
 | `POST /ai/meetings/{meetingId}/context/messages`, `POST /ai/meetings/{meetingId}/context` | 구현됨. 7.1/7.2 계약대로 `history`+`message` → `reply` (메시지), `history` → `reply`+`purpose` (최종) | 목표와 일치. `uiInputs`/`meetingContext`/`conflictsWithUi`는 폐기하고 대화 요약 하나로 대체했다 |
 | `POST /ai/meetings/{meetingId}/candidates` | 이미 확정된 `confirmedSlot`과 현재 중첩형 후보 스키마를 사용. `meetingTags`, `candidates[].tags`는 이미 구현됨 | 참여자 날짜 교집합(**미확정 — 14장 참고**), 새 내부 DTO와 flat suggestion 응답으로 변경 검토. 복수 `sourceUrls`, 확인 시각, 좌표, 실제 영업시간, domain 보완 필요. 태그는 유지하되 필드명을 `candidates`→`suggestions`에 맞춰 옮기는 정도만 필요. `excluded` 디버그 필드는 목표 응답에서 제거 검토 중 |
 | 후보 영업 검증 | 시작 날짜에 영업하는지만 판단 | `proposedStartAt..EndAt` 실제 시각에 영업하는지 검증해야 함 |
-| `POST /ai/meetings/{meetingId}/revise` | 단일 `feedback`을 받아 라우팅만 수행하는 코드가 아직 남아있음 | **목표 계약에서 엔드포인트 자체를 제거.** 재생성은 `/context/messages`+`/context`+`/candidates` 재사용으로 대체 (9장). 코드 삭제는 사용자 확인 후 진행 |
 
 특히 현재 후보 검증은 날짜만 확인하면서 `AVAILABLE_AT_MEETING_TIME` 의미를 사용하므로, 코드 변경 시 실제 제안 시각 기준 검증으로 바로잡아야 한다.
 

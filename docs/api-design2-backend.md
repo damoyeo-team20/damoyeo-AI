@@ -17,7 +17,7 @@
 | `POST` | `/ai/meetings/{meetingId}/context` | Back → AI | 모임 목적 채팅 최종 전송 시 한 문장 요약 | ✅ 구현됨 |
 | `POST` | `/ai/meetings/{meetingId}/candidates` | Back worker → AI | 시간·장소 후보 생성 | 🔴 미구현 — 목표 계약. 날짜 교집합 계산 주체도 미확정 |
 
-전용 재생성(`/revise`) API는 없다. "재생성"은 제품 흐름상 "뒤로가기"로 단순화됐다 — Back이 `/context/messages`로 되돌아가 다시 대화하고 `/context`로 재요약한 뒤 `/candidates`를 다시 호출한다. 이전에 보여준 장소는 `/candidates`의 `excludedExternalPlaceIds`에 누적해서 채운다(6장 참고). 현재 코드에는 단일 `feedback` 기반 `/revise`가 아직 남아있으며, 삭제는 사용자 확인 후 진행한다.
+전용 재생성(`/revise`) API는 없다. "재생성"은 제품 흐름상 "뒤로가기"로 단순화됐다 — Back이 `/context/messages`로 되돌아가 다시 대화하고 `/context`로 재요약한 뒤 `/candidates`를 다시 호출한다. 이전에 보여준 장소는 `/candidates`의 `excludedExternalPlaceIds`에 누적해서 채운다(6장 참고). 코드에서도 `/revise` 라우트와 관련 스키마·노드를 제거했다.
 
 🔴로 표시한 항목은 이 문서의 계약대로 지금 당장 연동하면 실패한다. 상세 격차는 [`api-design2.md`](api-design2.md) 13장 참고.
 
@@ -518,4 +518,4 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 3. Back이 `/candidates`를 다시 호출한다. 이때 지금까지 모든 generation에서 보여준 `externalPlaceId`를 누적해 `excludedExternalPlaceIds`에 채운다(6장) — 목록이 비어 있으면 예전과 동일하게 동작하고, 채워져 있으면 해당 장소를 제외한다. 새로 추가한 필드가 아니라 6장에 이미 있던 필드다.
 4. 특정 장소 하나만 콕 집어 제외하는 대화형 협상은 지원하지 않는다 — 다시 시작하면 이전에 보여준 것 전체가 제외 대상이다.
 
-현재 코드에는 단일 `feedback` 기반 `/revise`가 아직 남아있다. 삭제는 사용자 확인 후 진행한다.
+단일 `feedback` 기반이던 기존 `/revise` 코드(라우트·스키마·노드)는 삭제했다.

@@ -9,7 +9,9 @@
 3. 테스트로 검증한다 (pytest, 필요하면 실제 Gemini 호출로 확인).
 4. 명세와 다르게 구현해야 할 이유가 생기면 코드부터 고치지 않는다 — 명세서를 먼저 갱신하고 사용자 확인을 받은 뒤 코드에 반영한다.
 
-진행 순서: **① `/context` 2단계 분리 (`/context/messages` 신규 + `/context` 재정의) → ② `/candidates` → ③ `/revise`**
+진행 순서: **① `/context` 2단계 분리 (`/context/messages` 신규 + `/context` 재정의, 완료) → ② `/candidates`**
+
+`/revise`는 목표 계약과 코드 양쪽에서 제거했다 — 제품 흐름상 "재생성"이 "뒤로가기"로 단순화되면서 전용 엔드포인트 없이 `/context/messages`+`/context`+`/candidates`를 재사용하기로 했다 (`api-design2-backend.md` 7장 참고).
 
 ## 문서별 역할 (참고 우선순위)
 
