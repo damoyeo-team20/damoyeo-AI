@@ -1,20 +1,20 @@
 """`/ai/meetings/{meetingId}/candidates`가 실행하는 N4 -> L5 -> N6 -> N7 파이프라인의 상태.
 
-README/ai-part-proposal.md의 MeetingState 전체 중 이 4개 노드가 필요로 하는 부분만 다룬다.
-L3(시간 교집합)와 L9(캘린더 등록)는 이 저장소의 담당 범위가 아니다.
+날짜·시간 확정(N3)은 `/schedule` 별도 엔드포인트가 담당하고, 이 그래프는 이미 확정된
+`confirmed_slot`을 받아서 그 시각에 맞는 장소만 찾는다.
 """
 
+from datetime import datetime
 from typing import TypedDict
 
 from app.schemas.candidates import (
-    Candidate,
+    ActionRequired,
     ConfirmedSlot,
-    ConflictInfo,
-    ExcludedActivity,
+    MeetingInput,
     ParticipantPreference,
+    Suggestion,
     Tag,
 )
-from app.schemas.meeting_context import MeetingContext
 
 
 class ActivityPlan(TypedDict):
@@ -31,6 +31,8 @@ class PlaceCandidate(TypedDict):
     address: str
     category: str
     place_url: str | None
+    latitude: float | None
+    longitude: float | None
 
 
 class VerifiedPlace(TypedDict):
@@ -40,27 +42,29 @@ class VerifiedPlace(TypedDict):
     address: str
     category: str
     place_url: str | None
+    latitude: float | None
+    longitude: float | None
     verification_status: str
-    verification_evidence: str | None
+    # 검증으로 확인한 실제 영업시간 문구. 확인 못 했으면 None.
+    business_hours: str | None
     verification_source: str | None
-    verification_confidence: float | None
+    checked_at: datetime
 
 
 class CandidatesState(TypedDict, total=False):
     # 입력
+    meeting: MeetingInput
     confirmed_slot: ConfirmedSlot
-    region: str
-    # meetings.purpose — 주최자 요청 원문. CONFLICT 응답의 hostRequest로 되돌려준다.
-    purpose: str | None
-    meeting_context: MeetingContext
+    # 참여자 구분 없이 합친 선호 목록. 후보 선정은 항상 집단 수준으로 판단한다.
     participant_preferences: list[ParticipantPreference]
-    blocked_domains: list[str]
+    meeting_memory_summary: str | None
+    excluded_external_place_ids: list[str]
 
     # N4 산출물
     activities: list[ActivityPlan]
-    excluded: list[ExcludedActivity]
-    conflict: ConflictInfo | None
+    action_required: ActionRequired | None
     meeting_tags: list[Tag]
+    summary: str
 
     # L5 산출물
     place_candidates: list[PlaceCandidate]
@@ -70,4 +74,4 @@ class CandidatesState(TypedDict, total=False):
     verification_timed_out: bool
 
     # N7 산출물
-    final_candidates: list[Candidate]
+    suggestions: list[Suggestion]

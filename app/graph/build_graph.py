@@ -15,7 +15,7 @@ from app.graph.state import CandidatesState
 
 
 def _route_after_activity_decision(state: CandidatesState) -> str:
-    return "conflict" if state.get("conflict") else "continue"
+    return "conflict" if state.get("action_required") else "continue"
 
 
 def build_candidates_graph() -> CompiledStateGraph:

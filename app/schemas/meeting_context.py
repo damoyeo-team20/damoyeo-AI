@@ -6,18 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # 계약은 docs/api-design2-backend.md 5장 기준. 지역/날짜/시간대는 다른 화면(UI)에서 이미 확정되므로
 # 이 노드는 관여하지 않는다 — UiInputs/UiConflict 같은 개념은 새 계약에 없다.
 #
-# MeetingContext(activity_hints/meeting_tone/explicit_constraints)는 /candidates 파이프라인
-# (N4/N7)이 아직 참조하는 구조체라 여기 남겨둔다. /candidates 계약을 다음 단계에서 다시 맞출 때
-# meeting.purpose 단일 문자열로 대체되며 이 클래스는 제거될 예정이다.
-
-
-class MeetingContext(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    activity_hints: list[str] = Field(default_factory=list, alias="activityHints")
-    meeting_tone: str | None = Field(default=None, alias="meetingTone")
-    # 주최자가 명시적으로 못박은 조건 (예: "알레르기 있는 사람 있으니 견과류 빼줘").
-    explicit_constraints: list[str] = Field(default_factory=list, alias="explicitConstraints")
+# 대화 결과는 구조화된 객체가 아니라 한 문장 purpose로 내려간다. /candidates도 이 문장을
+# meeting.purpose로 그대로 받으므로, 중간 구조체(옛 MeetingContext)는 더 이상 없다.
 
 
 class ChatRole(str, Enum):

@@ -12,7 +12,8 @@ AI 서비스가 담당하는 것:
 
 - 자연어에서 장기 개인 선호를 추출하고 Vocabulary에 매핑
 - 모임 목적 대화 응대와 한 문장 요약
-- 참여자 날짜·선호·과거 모임 요약을 종합해 시간·장소 후보 생성
+- 참여자 전원 가능 날짜(Back이 계산) 중 이번 모임에 맞는 하루와 시간 확정
+- 참여자 선호·과거 모임 요약을 종합해 확정된 시간에 맞는 장소 후보 생성
 - 장소 검색 결과의 영업 정보 검증과 그룹 수준 선정 사유 생성
 
 Back이 담당하는 것:
@@ -37,11 +38,12 @@ Back이 담당하는 것:
 | `POST` | `/ai/preferences/extract` | Back → AI | 개인 선호 추출 및 답변 생성 | ✅ 구현됨 |
 | `POST` | `/ai/meetings/{meetingId}/context/messages` | Back → AI | 모임 목적 채팅 한 턴 | ✅ 구현됨 |
 | `POST` | `/ai/meetings/{meetingId}/context` | Back → AI | 모임 목적 채팅 최종 전송 시 한 문장 요약 | ✅ 구현됨 |
-| `POST` | `/ai/meetings/{meetingId}/candidates` | Back worker → AI | 시간·장소 후보 생성 | 🔴 미구현 — 목표 계약. 날짜 교집합 계산 주체도 미확정 |
+| `POST` | `/ai/meetings/{meetingId}/schedule` | Back → AI | 전원 가능 날짜 중 하루를 골라 시작/종료 시각 확정 | ✅ 구현됨 |
+| `POST` | `/ai/meetings/{meetingId}/candidates` | Back worker → AI | 확정된 시간에 맞는 장소 후보 생성 | ⚠️ 구현됨 — 영업 검증 timeout 값은 조정 필요 (9장 5번) |
 
-전용 재생성(`/revise`) API는 없다. "재생성"은 제품 흐름상 "뒤로가기"로 단순화됐다 — Back이 `/context/messages`로 되돌아가 다시 대화하고 `/context`로 재요약한 뒤 `/candidates`를 다시 호출한다. 이전에 보여준 장소는 `/candidates`의 `excludedExternalPlaceIds`에 누적해서 채운다(6장 참고). 코드에서도 `/revise` 라우트와 관련 스키마·노드를 제거했다.
+전용 재생성(`/revise`) API는 없다. "재생성"은 제품 흐름상 "뒤로가기"로 단순화됐다 — Back이 `/context/messages`로 되돌아가 다시 대화하고 `/context`로 재요약한 뒤 `/schedule`·`/candidates`를 다시 호출한다. 이전에 보여준 장소는 `/candidates`의 `excludedExternalPlaceIds`에 누적해서 채운다(7장 참고). 코드에서도 `/revise` 라우트와 관련 스키마·노드를 제거했다.
 
-🔴로 표시한 항목은 이 문서의 계약대로 지금 당장 연동하면 실패한다. `/candidates`의 현재 코드는 이미 확정된 `confirmedSlot`을 받는 평면 구조이고 응답도 `suggestions`가 아닌 중첩형 `candidates`라, 6장 계약에 맞추는 작업이 남아 있다.
+모든 엔드포인트가 이 문서의 계약대로 구현되어 있다. `/candidates`는 계약은 맞지만 영업 검증 제한 시간(현재 20초)이 실제 검증 소요 시간보다 짧아 조정이 필요하다 — 9장 5번 참고.
 
 ### 기본 규칙
 
@@ -286,9 +288,81 @@ AI는 상태를 저장하지 않는다 (LLM 호출 자체가 매번 독립적이
 
 ---
 
-## 6. `POST /ai/meetings/{meetingId}/candidates`
+## 6. `POST /ai/meetings/{meetingId}/schedule`
 
-Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달하면 AI가 시간과 장소가 결합된 후보를 최대 3개 반환한다.
+참여자별 가능 날짜의 교집합은 **Back이 계산해서 `commonAvailableDates`로 전달한다.** 이 API는 그중 이번 모임에 가장 적당한 날짜 하나를 고르고, 선호 시간대·모임 길이를 적용해 구체적인 시작/종료 시각을 확정한다. `/candidates`(7장)보다 먼저 호출해서 나온 결과를 `confirmedSlot`으로 그대로 넘겨준다.
+
+날짜 후보 자체가 없으면(교집합이 비어 있으면) Back이 이 API를 호출하지 않는다 — AI에게 빈 목록에서 고르라고 요청하지 않는다.
+
+### Request
+
+```json
+{
+  "commonAvailableDates": [
+    "2026-08-23",
+    "2026-08-30"
+  ],
+  "preferredTimeOfDay": "EVENING",
+  "durationMinutes": 120,
+  "timezone": "Asia/Seoul"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `commonAvailableDates` | `date[]` | O | Back이 계산한 전원 가능 날짜. 최소 1개, 중복 불가. AI는 이 중에서만 고른다 |
+| `preferredTimeOfDay` | `PreferredTimeOfDay` | O | 선호 시간대 |
+| `durationMinutes` | `integer \| null` | O | 모임 길이. `null`이면 120분 |
+| `timezone` | `IANA timezone` | O | MVP 기본 `Asia/Seoul` |
+
+### Response `200`
+
+```json
+{
+  "resolvedStartAt": "2026-08-23T18:00:00+09:00",
+  "resolvedEndAt": "2026-08-23T20:00:00+09:00",
+  "reason": "주말 저녁 시간대라 다들 다음 날 부담 없이 여유롭게 모일 수 있어요."
+}
+```
+
+| 필드 | 타입 | nullable | 설명 |
+| --- | --- | --- | --- |
+| `resolvedStartAt` | `datetime` | X | 확정된 시작 시각 |
+| `resolvedEndAt` | `datetime` | X | 확정된 종료 시각 |
+| `reason` | `string` | X | 이 날짜를 고른 이유 한 문장 |
+
+규칙 (AI가 응답을 만들 때 구조적으로 지킨다 — 고를 수 있는 날짜를 LLM 응답 스키마 자체에서 제약하고, 시각은 코드가 계산하므로 아래 세 조건을 어길 수 없다):
+
+- `resolvedStartAt`의 현지 날짜는 `commonAvailableDates` 중 하나다.
+- `resolvedEndAt`은 `resolvedStartAt`보다 뒤다.
+- 두 시각의 차이는 정확히 `durationMinutes`(`null`이면 120분)다.
+- `durationMinutes`가 선택한 시간대 범위(아래 PreferredTimeOfDay)보다 길면 `400 INVALID_DURATION_FOR_TIME_OF_DAY`를 반환한다.
+
+Back은 이 응답을 검증한 뒤 `meetings.confirmed_start_at`/`confirmed_end_at`에 저장하고, 위 조건을 어긴 응답을 받으면 Front에 `502 AI_RESPONSE_INVALID`로 변환해 반환한다.
+
+| HTTP | code | 발생 조건 | retryable |
+| --- | --- | --- | --- |
+| `400` | `INVALID_DURATION_FOR_TIME_OF_DAY` | 모임 길이가 선택 시간대보다 김 | `false` |
+| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락·타입 오류 또는 `commonAvailableDates`가 비었거나 중복 | `false` |
+| `503` | `MODEL_UNAVAILABLE` | LLM 호출 불가 | `true` |
+| `502` | `MODEL_RESPONSE_INVALID` | 모델 결과가 응답 스키마와 불일치 | `true` |
+
+### PreferredTimeOfDay
+
+| 값 | 현지 시각 범위 |
+| --- | --- |
+| `DAYTIME` | `11:00 <= start`, `end <= 15:00` |
+| `LATE_AFTERNOON` | `15:00 <= start`, `end <= 18:00` |
+| `EVENING` | `18:00 <= start`, `end <= 23:00` |
+| `ANY` | `11:00 <= start`, `end <= 23:00` |
+
+`durationMinutes`는 선택한 시간대 범위보다 길 수 없다.
+
+---
+
+## 7. `POST /ai/meetings/{meetingId}/candidates`
+
+Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달하면 AI가 확정된 시간(`confirmedSlot`, 6장에서 얻은 값)에 맞는 장소 후보를 최대 3개 반환한다. 날짜·시간 결정은 이 API의 일이 아니다 — 그건 6장 `/schedule`이 이미 끝냈다.
 
 ### Request
 
@@ -299,19 +373,15 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
   "meeting": {
     "id": 20,
     "purpose": "오랜만에 만나 조용한 곳에서 대화하는 저녁 식사",
-    "region": "건대",
-    "scheduleSearchFrom": "2026-08-23",
-    "scheduleSearchTo": "2026-09-07",
-    "preferredTimeOfDay": "EVENING",
-    "durationMinutes": null,
-    "timezone": "Asia/Seoul"
+    "region": "건대"
+  },
+  "confirmedSlot": {
+    "confirmedStartAt": "2026-08-23T18:00:00+09:00",
+    "confirmedEndAt": "2026-08-23T20:00:00+09:00"
   },
   "participants": [
     {
       "userId": 1,
-      "selectedDates": [
-        "2026-08-30"
-      ],
       "preferences": [
         {
           "vocabularyCode": "SPICY_FOOD",
@@ -336,14 +406,10 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | `meeting.id` | `integer` | O | path의 `meetingId`와 동일해야 함 |
 | `meeting.purpose` | `string` | O | `meetings.purpose`의 현재 목적. 재생성이면 `/context/messages`+`/context`로 다시 얻은 새 목적, 최대 1,000자 |
 | `meeting.region` | `string` | O | 장소 검색 지역, 최대 100자 |
-| `meeting.scheduleSearchFrom` | `date` | O | 탐색 시작일 |
-| `meeting.scheduleSearchTo` | `date` | O | 탐색 종료일 |
-| `meeting.preferredTimeOfDay` | `PreferredTimeOfDay` | O | 선호 시간대 |
-| `meeting.durationMinutes` | `integer \| null` | O | 모임 길이. `null`이면 120분 |
-| `meeting.timezone` | `IANA timezone` | O | MVP 기본 `Asia/Seoul` |
+| `confirmedSlot.confirmedStartAt` | `datetime` | O | `/schedule` 응답의 `resolvedStartAt` |
+| `confirmedSlot.confirmedEndAt` | `datetime` | O | `/schedule` 응답의 `resolvedEndAt`. `confirmedStartAt`보다 뒤여야 함 |
 | `participants` | `Participant[]` | O | 최소 1명 |
 | `participants[].userId` | `integer` | O | 참여자 ID |
-| `participants[].selectedDates` | `date[]` | O | 참여 가능 날짜 |
 | `participants[].preferences` | `Preference[]` | O | 저장된 개인 선호. 없으면 `[]` |
 | `participants[].preferences[].vocabularyCode` | `string` | O | 실존 Vocabulary 코드 |
 | `participants[].preferences[].sentiment` | `POSITIVE \| NEGATIVE` | O | 선호 방향 |
@@ -408,7 +474,7 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | --- | --- | --- | --- |
 | `requestId` | `UUID string` | X | 요청 ID echo |
 | `status` | `CandidateStatus` | X | 생성 결과 |
-| `appliedDurationMinutes` | `integer` | X | 실제 적용한 모임 길이 |
+| `appliedDurationMinutes` | `integer` | X | `confirmedSlot`에서 파생한 모임 길이(분) |
 | `summary` | `string` | X | 전체 제안 설명 |
 | `meetingTags` | `Tag[]` | X | 참여자 선호를 종합한 "이번 자리의 성격" 배지. 근거가 없으면 `[]` |
 | `suggestions` | `Suggestion[]` | X | 순위순 후보, 최대 3개 |
@@ -423,8 +489,8 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | `suggestions[].latitude` | `number` | X | 위도 `-90..90` |
 | `suggestions[].longitude` | `number` | X | 경도 `-180..180` |
 | `suggestions[].externalUrl` | `URI \| null` | O | 장소 상세 URL |
-| `suggestions[].proposedStartAt` | `datetime` | X | 제안 시작 시각 |
-| `suggestions[].proposedEndAt` | `datetime` | X | 제안 종료 시각 |
+| `suggestions[].proposedStartAt` | `datetime` | X | 요청의 `confirmedSlot.confirmedStartAt`과 동일 |
+| `suggestions[].proposedEndAt` | `datetime` | X | 요청의 `confirmedSlot.confirmedEndAt`과 동일 |
 | `suggestions[].businessHours` | `string \| null` | O | 표시용 영업시간 |
 | `suggestions[].businessHoursVerified` | `boolean` | X | 영업시간 확인 여부 |
 | `suggestions[].openAtMeetingTime` | `boolean \| null` | O | 제안 시각 영업 여부. 미확인이면 `null` |
@@ -471,65 +537,50 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | `status` | `suggestions` | `actionRequired` |
 | --- | --- | --- |
 | `OK` | 1~3개 | `null` |
-| `NO_COMMON_SLOT` | `[]` | `{type: "NO_COMMON_SLOT", message}` |
 | `NO_CANDIDATE` | `[]` | `{type: "NO_CANDIDATE", message}` |
 | `CONFLICT` | `[]` | `{type: "PREFERENCE_CONFLICT", message, hostRequest, conflictingPreferenceCodes}` |
 
+`NO_COMMON_SLOT`은 없다 — 날짜 교집합은 Back이 계산하고, 그 결과를 고르는 것도 `/schedule`(6장)이 이미 끝냈으므로 이 API가 호출될 때는 시간이 항상 확정되어 있다.
+
 | `actionRequired` 필드 | 타입 | 조건 |
 | --- | --- | --- |
-| `type` | `NO_COMMON_SLOT \| NO_CANDIDATE \| PREFERENCE_CONFLICT` | 항상 필수 |
+| `type` | `NO_CANDIDATE \| PREFERENCE_CONFLICT` | 항상 필수 |
 | `message` | `string` | 항상 필수 |
 | `hostRequest` | `string` | `PREFERENCE_CONFLICT`일 때 필수 |
 | `conflictingPreferenceCodes` | `string[]` | `PREFERENCE_CONFLICT`일 때 필수 |
 
 필수 규칙:
 
-- `scheduleSearchFrom <= scheduleSearchTo`
-- `selectedDates`는 탐색 기간 안에 있어야 하며 사용자별 ID와 선호 코드는 중복될 수 없다.
-- `durationMinutes`는 non-null이면 양의 정수이고 선택 시간대 범위보다 짧거나 같아야 한다.
+- `confirmedSlot.confirmedEndAt`은 `confirmedStartAt`보다 뒤여야 한다. 아니면 `422 REQUEST_SCHEMA_INVALID`다.
+- `participants[]`의 사용자 ID와 각 사용자의 선호 코드는 중복될 수 없다.
 - `participants[].preferences[].rawValue`는 255자 이하다.
 - `excludedExternalPlaceIds`는 중복될 수 없다.
-- **[미확정]** AI의 코드 로직이 참여자 날짜 교집합과 구체 시각을 계산하는 안을 검토 중이나, Back이 계산해서 `confirmedSlot`으로 넘겨주는 기존 안과 아직 확정되지 않았다 — 추후 논의.
-- `durationMinutes=null`이면 `appliedDurationMinutes=120`이다.
+- `appliedDurationMinutes`는 `confirmedSlot`의 종료-시작 분 차이와 같다.
 - `rank`는 1부터 끊김 없이 증가하고 장소 ID는 중복될 수 없다.
-- 제안 날짜는 참여자 가능 날짜 교집합 안에 있어야 하며, 종료-시작 길이는 `appliedDurationMinutes`와 같고 선택 시간대 범위 안에 있어야 한다.
+- 모든 `suggestions`는 같은 `confirmedSlot`을 사용한다 — 모임 하나에 시간은 하나이고, 후보 3개는 그 시간의 장소 선택지다.
 - 각 후보의 `reasons`와 `sourceUrls`는 최소 1개다.
 - 확인 결과 폐점인 장소는 반환하지 않는다.
 - 영업 확인 완료 시 `businessHoursVerified=true`, `businessHours!=null`, `openAtMeetingTime=true`다.
 - 영업 확인 불가 시 `businessHoursVerified=false`, `openAtMeetingTime=null`일 수 있다.
 - `matchedPreferenceDomains`는 요청의 Vocabulary code에서 파생된 값이다.
 - timeout 후 후보가 1개 이상이면 `OK`와 `verificationTimedOut=true`, 하나도 없으면 `504`를 반환한다.
-- `NO_COMMON_SLOT`, `NO_CANDIDATE`, `CONFLICT`는 시스템 오류가 아니므로 HTTP `200`으로 반환한다.
+- `NO_CANDIDATE`, `CONFLICT`는 시스템 오류가 아니므로 HTTP `200`으로 반환한다.
 
 | HTTP | code | 발생 조건 | retryable |
 | --- | --- | --- | --- |
 | `400` | `MEETING_ID_MISMATCH` | path와 body의 일정 ID가 다름 | `false` |
-| `400` | `INVALID_DATE_RANGE` | 탐색 기간이 역전됨 | `false` |
-| `400` | `INVALID_SELECTED_DATES` | 참여자 날짜가 탐색 범위를 벗어남 | `false` |
-| `400` | `INVALID_DURATION_FOR_TIME_OF_DAY` | 모임 길이가 선택 시간대보다 김 | `false` |
 | `400` | `UNSUPPORTED_CONTRACT_VERSION` | 지원하지 않는 DTO 버전 | `false` |
 | `400` | `INVALID_PLANNING_INPUT` | 참여자 중복 등 필드 조합 오류 | `false` |
-| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락 또는 타입·enum 오류 | `false` |
+| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락·타입 오류 또는 `confirmedEndAt <= confirmedStartAt` | `false` |
 | `503` | `VOCABULARY_UNAVAILABLE` | 선호 코드 검증용 Vocabulary 사용 불가 | `true` |
 | `503` | `MODEL_UNAVAILABLE` | LLM 호출 불가 | `true` |
 | `502` | `MODEL_RESPONSE_INVALID` | 모델 결과가 응답 스키마와 불일치 | `true` |
 | `502` | `PLACE_PROVIDER_ERROR` | 장소 제공자 호출 실패 | `true` |
 | `504` | `CANDIDATE_GENERATION_TIMEOUT` | 전체 후보 생성 제한 시간 초과 | `true` |
 
-### PreferredTimeOfDay
-
-| 값 | 현지 시각 범위 |
-| --- | --- |
-| `DAYTIME` | `11:00 <= start`, `end <= 15:00` |
-| `LATE_AFTERNOON` | `15:00 <= start`, `end <= 18:00` |
-| `EVENING` | `18:00 <= start`, `end <= 23:00` |
-| `ANY` | `11:00 <= start`, `end <= 23:00` |
-
-적용 모임 길이는 선택한 시간대 범위보다 길 수 없다.
-
 ---
 
-## 7. 재생성("뒤로가기") — 전용 API 없음
+## 8. 재생성("뒤로가기") — 전용 API 없음
 
 `POST /ai/meetings/{meetingId}/revise`는 목표 계약에서 제거했다. "재생성"은 제품 흐름상 전용 화면이 아니라 목적 대화 화면(5장)으로의 "뒤로가기"로 구현되므로, 별도 엔드포인트나 `currentDraftPurpose`/`currentSuggestions`/`uiChangeRequests` 같은 전용 스키마가 필요 없다.
 
@@ -537,31 +588,30 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 
 1. Back이 사용자를 `/context/messages` 대화 화면으로 되돌린다 (5.1장).
 2. 사용자가 다시 "최종 전송하기"를 누르면 `/context`로 새 `purpose`를 받는다 (5.2장).
-3. Back이 `/candidates`를 다시 호출한다. 이때 지금까지 모든 generation에서 보여준 `externalPlaceId`를 누적해 `excludedExternalPlaceIds`에 채운다(6장) — 목록이 비어 있으면 예전과 동일하게 동작하고, 채워져 있으면 해당 장소를 제외한다. 새로 추가한 필드가 아니라 6장에 이미 있던 필드다.
+3. Back이 `/schedule`로 시간을 다시 확정하고 `/candidates`를 다시 호출한다. 이때 지금까지 모든 generation에서 보여준 `externalPlaceId`를 누적해 `excludedExternalPlaceIds`에 채운다(7장) — 목록이 비어 있으면 예전과 동일하게 동작하고, 채워져 있으면 해당 장소를 제외한다. 새로 추가한 필드가 아니라 7장에 이미 있던 필드다.
 4. 특정 장소 하나만 콕 집어 제외하는 대화형 협상은 지원하지 않는다 — 다시 시작하면 이전에 보여준 것 전체가 제외 대상이다.
 
 단일 `feedback` 기반이던 기존 `/revise` 코드(라우트·스키마·노드)는 삭제했다.
 
 ---
 
-## 8. 확인 필요 사항
+## 9. 확인 필요 사항
 
 API의 큰 경계와 필드는 정의할 수 있지만 다음 정책은 팀 합의가 필요하다.
 
 1. **Back↔AI 인증 방식**: 공유 Bearer token과 mTLS 중 무엇을 사용할지.
-2. **시간 교집합(L3) 계산 주체**: AI의 비-LLM 단계가 참여자 날짜 교집합을 계산하는 안을 검토했으나 확정된 게 아니다. Back이 계산해서 `confirmedSlot`으로 넘겨주는 기존 안과 아직 결론 나지 않았고 추후 다시 논의한다. `participants[].selectedDates` 입력과 "AI가 계산" 서술은 검토안이지 확정이 아니다.
-3. **날짜보다 세밀한 가능 시간**: MVP는 `selectedDates`만 받지만, 사용자별 시간 단위 가능 여부가 필요하면 `availableSlots[{startAt,endAt}]` 계약을 추가해야 한다.
-4. **Meeting Memory 생성 주체와 갱신 시점**: AI 입력을 최소한의 `summary`로 정했지만 언제 요약하고 갱신할지는 미정이다.
-5. **Vocabulary 캐시 갱신**: TTL, Back 변경 알림 또는 수동 refresh 중 어떤 방식을 쓸지.
-6. **후보 생성 timeout과 재시도 횟수**: Back worker와 AI 서버의 제한 시간을 함께 정해야 한다.
-7. **사용자 결정 필요 결과의 Back 상태 매핑**: AI의 `NO_COMMON_SLOT`, `CONFLICT`, `NO_CANDIDATE`를 Back의 run·meeting 상태와 Front 화면에 어떻게 연결할지 Back 계약에서 정해야 한다.
-8. **자연어 입력 상한**: `messages`, `meetingMemory`의 최대 개수와 글자 수는 모델 비용·timeout 기준을 정한 뒤 확정해야 한다.
-9. **가능 날짜 데이터 원천**: `selectedDates`를 어느 Back 저장소 또는 Calendar 결과에서 조립할지와 시간 단위 `availableSlots` 확장 여부는 아직 미정이다.
-10. **재생성 시 `excludedExternalPlaceIds` 누적 저장소**: Back이 "지금까지 모든 generation에서 보여준 `externalPlaceId`"를 어디에 쌓아둘지는 AI 계약과 무관한 Back 내부 설계다 — AI는 상태를 저장하지 않으므로 Back이 매 `/candidates` 호출마다 완성된 목록을 보내주기만 하면 된다. `db_schema.md`의 "아직 구현되지 않은 테이블" 목록에 있는 `meeting_suggestions`가 이 역할을 할 것으로 보이지만 스키마가 아직 공유되지 않았다. 같은 목록의 `revision_requests`는 `/revise` 제거로 더 이상 필요 없을 가능성이 높다 — 확인 필요.
+2. **날짜보다 세밀한 가능 시간**: MVP는 날짜 단위 `commonAvailableDates`만 받는다. 사용자별 시간 단위 가능 여부가 필요하면 `commonAvailableSlots[{startAt,endAt}]` 형태로 확장해야 한다.
+3. **Meeting Memory 생성 주체와 갱신 시점**: AI 입력을 최소한의 `summary`로 정했지만 언제 요약하고 갱신할지는 미정이다.
+4. **Vocabulary 캐시 갱신**: TTL, Back 변경 알림 또는 수동 refresh 중 어떤 방식을 쓸지.
+5. **후보 생성 timeout과 재시도 횟수**: Back worker와 AI 서버의 제한 시간을 함께 정해야 한다. 현재 AI의 영업 검증 전체 제한 시간은 20초인데, 장소 한 곳을 검증하는 데 웹 검색 + 판정 2회 호출이 필요해 실측이 이를 넘겼다. 값을 올리든 검증 범위를 줄이든 조정이 필요하다.
+6. **사용자 결정 필요 결과의 Back 상태 매핑**: AI의 `CONFLICT`, `NO_CANDIDATE`를 Back의 run·meeting 상태와 Front 화면에 어떻게 연결할지 Back 계약에서 정해야 한다.
+7. **자연어 입력 상한**: `messages`, `meetingMemory`의 최대 개수와 글자 수는 모델 비용·timeout 기준을 정한 뒤 확정해야 한다.
+8. **`commonAvailableDates` 데이터 원천**: Back이 교집합을 어느 저장소 또는 Calendar 결과에서 계산할지는 Back 내부 설계다.
+9. **재생성 시 `excludedExternalPlaceIds` 누적 저장소**: Back이 "지금까지 모든 generation에서 보여준 `externalPlaceId`"를 어디에 쌓아둘지는 AI 계약과 무관한 Back 내부 설계다 — AI는 상태를 저장하지 않으므로 Back이 매 `/candidates` 호출마다 완성된 목록을 보내주기만 하면 된다. `db_schema.md`의 "아직 구현되지 않은 테이블" 목록에 있는 `meeting_suggestions`가 이 역할을 할 것으로 보이지만 스키마가 아직 공유되지 않았다. 같은 목록의 `revision_requests`는 `/revise` 제거로 더 이상 필요 없을 가능성이 높다 — 확인 필요.
 
 ---
 
-## 9. 명세에서 의도적으로 제외한 것
+## 10. 명세에서 의도적으로 제외한 것
 
 - Front가 호출하는 `/api/**` 전체 명세
 - 회원가입·로그인·그룹·초대·일정 CRUD API

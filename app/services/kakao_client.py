@@ -16,6 +16,9 @@ class KakaoPlace(BaseModel):
     category: str
     # 장소 상세페이지 URL. 응답의 place_url 필드.
     place_url: str | None = None
+    # Kakao 응답의 x=경도(longitude), y=위도(latitude) — 이름이 직관과 반대라 뒤집지 않도록 주의.
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 async def search_places(keyword: str, region: str, size: int = 5) -> list[KakaoPlace]:
@@ -54,6 +57,18 @@ async def search_places(keyword: str, region: str, size: int = 5) -> list[KakaoP
             address=doc.get("road_address_name") or doc["address_name"],
             category=doc.get("category_name", ""),
             place_url=doc.get("place_url"),
+            latitude=_to_float(doc.get("y")),
+            longitude=_to_float(doc.get("x")),
         )
         for doc in documents
     ]
+
+
+def _to_float(value: object) -> float | None:
+    """좌표는 문자열로 내려온다. 값이 없거나 숫자가 아니면 좌표 없이 진행한다."""
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
