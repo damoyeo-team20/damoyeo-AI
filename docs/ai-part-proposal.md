@@ -1,6 +1,6 @@
 # 다모여 — AI 파트 기획서
 
-이 문서는 `topic-development.md`(브레인스토밍·피드백 히스토리), `service-proposal.md`(공식 기획안), `ai-pipeline-design.md`(파이프라인 설계), `backend-ai-contract.md`(Agent↔Backend API 계약) 네 문서를 종합해 AI 파트의 입장에서 다시 정리한 것이다. `db_schema.md`는 현재 비어있어 이번 버전에는 반영하지 못했다.
+이 문서는 `topic-development.md`(브레인스토밍·피드백 히스토리), `service-proposal.md`(공식 기획안), `ai-pipeline-design.md`(파이프라인 설계), `backend-ai-contract.md`(Agent↔Backend API 계약), `db_schema.md`(백엔드 DB 스키마 확정본) 다섯 문서를 종합해 AI 파트의 입장에서 다시 정리한 것이다. 실제 요청/응답 형태는 `api-design.md`가 기준이다.
 
 네 문서 사이에 서로 다른 내용이 있는 지점은 임의로 하나를 골라 조용히 통일하지 않고, **최종안 + 근거 + 남은 차이**를 그대로 노출했다 (12장 오픈 이슈 참고).
 
@@ -161,7 +161,7 @@ MeetingState
 
 **역할 분리**: 백엔드는 Vocabulary 관리/저장/검증, Agent는 자연어 이해·Preference 추출·Vocabulary 매핑만 한다.
 
-**Backend → Agent**: 사용자 텍스트 + Vocabulary 목록(`GET /internal/preference-vocabulary`, `{code, domain, attribute, parentCode}`로 계층 표현).
+**Backend → Agent**: 사용자 텍스트 + Vocabulary 목록(`GET /internal/preference-vocabulary`, `{code, domain, displayName, parentCode}`로 계층 표현). 초안에 있던 `attribute`는 확정된 DB 스키마에 없어 제외했고, 계층은 `parentCode` 하나로만 표현한다.
 
 **Agent → Backend** 응답 필드:
 
@@ -170,7 +170,7 @@ MeetingState
 | `vocabularyCode` | 표준 코드 (없으면 null) |
 | `rawValue` | 사용자가 실제 언급한 표현 |
 | `sentiment` | `POSITIVE` / `NEGATIVE` |
-| `strength` | `LOW` / `MEDIUM` / `HIGH` (2026-08-19 재논의로 3단계 확정 — 12장 오픈 이슈 #2 참고) |
+| `strength` | `WEAK` / `MODERATE` / `STRONG` (연속값이 아닌 3단계 — 12장 오픈 이슈 #2 참고) |
 | `mappingType` | `EXACT` / `GENERALIZED` / `UNMAPPED` |
 
 - **EXACT**: 표현이 Vocabulary와 직접 대응 ("돼지고기 좋아" → `PORK`)
@@ -190,7 +190,11 @@ MeetingState
 | Backend → Agent | 사용자 자연어, Vocabulary 목록 |
 | Agent → Backend | 구조화된 Preference (6장 스키마) |
 
-DB 테이블은 `preference_vocabulary`(id, domain, attribute, code, display_name, parent_id), `user_preference`(id, user_id, vocabulary_id, raw_value, sentiment, strength, mapping_type, source_text, created_at, updated_at) 두 개가 이 계약과 직결된다. 그 외 모임/일정/캘린더 관련 테이블은 `db_schema.md`가 채워지는 대로 이 문서에 반영한다.
+AI 서버는 DB에 직접 접근하지 않는다. 백엔드가 조회해 요청 DTO로 넘겨준다 (`db_schema.md`).
+
+이 계약과 직결된 테이블은 `preference_vocabulary`(id, code, domain, parent_code, display_name)와 `user_preferences`(id, user_id, vocabulary_code, raw_value, sentiment, strength, mapping_type, source_text, created_at, updated_at) 두 개다. `user_preferences`는 `(user_id, vocabulary_code)`가 UNIQUE이며 같은 코드가 다시 들어오면 UPSERT한다 — AI는 추출 결과만 반환하고 UPSERT는 백엔드 책임이다.
+
+모임 흐름 쪽은 `meetings`(purpose, region, schedule_search_from/to, preferred_time_of_day, confirmed_start_at/end_at)가 N2·N4 요청 필드와 1:1로 대응한다. `meeting_chat_messages`(대화 원문)와 `meeting_memories`(일정별 압축 기억 JSONB)는 아직 AI 엔드포인트에 연결되지 않았다 (12장 오픈 이슈).
 
 ---
 
@@ -257,10 +261,11 @@ DB 테이블은 `preference_vocabulary`(id, domain, attribute, code, display_nam
 이 기획서를 작성하며 문서 간에 서로 다르게 적혀 있거나 아직 결정되지 않은 것들.
 
 1. **자동 예약 방식 미정** (`service-proposal.md`: "예약 어떻게 할지…..ㅠ"). 네이버는 예약 API가 없어 브라우저 자동화가 필요한데 로그인·캡차 리스크가 큼. 세 가지 선택지 중 결정 필요: ① 실제 예약 API/샌드박스 확보 ② 제휴 식당 한정 자체 예약 콘솔 ③ "예약 요청까지만" 수행하고 과장하지 않기. 최소한 Google Calendar 등록은 실제로 동작해야 한다는 게 공통 의견.
-2. **`strength` 타입**: `ai-pipeline-design.md`(N1 설계)는 `LOW/MEDIUM/HIGH` 3단계를 권고했고, 백엔드 계약(6장) 초안은 `0.0~1.0` 연속값이었다. 한 차례 연속값을 최종으로 채택했으나, 이후 팀 논의를 거쳐 **`LOW/MEDIUM/HIGH` 3단계로 재확정**했다 (2026-08-19). LLM이 연속값을 얼마나 일관되게 뽑는지는 정량 검증하지 않았다 — 3단계로 되돌린 것은 검증 결과가 아니라 논의를 통한 재결정이다. 저장 시 수치 변환이 필요하면 Back이 담당한다 — AI는 3단계 값을 그대로 반환한다.
+2. ~~**`strength` 타입**~~ → **해결됨.** 초안에서 `0.0~1.0` 연속값과 3단계안 사이를 오갔으나, 최종적으로 `db_schema.md`의 `user_preferences.strength` 값인 **`WEAK` / `MODERATE` / `STRONG`** 3단계로 확정했다. AI는 이 값을 그대로 반환하고, 수치 변환이 필요하면 백엔드가 담당한다. (LLM이 연속값을 얼마나 일관되게 뽑는지는 정량 검증하지 않았다 — 3단계 선택은 검증 결과가 아니라 DB 스키마에 맞춘 결정이다.)
 3. **L3(시간 교집합) 계산 주체**: `ai-pipeline-design.md`는 이걸 AI 파이프라인의 비-LLM 노드로 그렸지만, `service-proposal.md`의 기술 스택 표는 "백엔드(Spring Boot): 캘린더 시간 교집합 계산"이라고 되어 있다. AI 서비스가 직접 계산하는지, 백엔드가 계산한 결과를 받아오기만 하는지 확정 필요.
 4. **모임별 개인 선호 저장 여부**: 0819 오전 회의에서 "구현해보고 안되면 수정"으로 결론 — 아직 최종 결정 아님.
 5. **참가자 가입 필수 여부**: AI 피드백은 "가입 없이 응답 가능"을 권고했으나, 이후 팀 논의에서 "가입을 무조건 해야 되는 상황"이라는 이야기도 나왔음 — 최종 확정 필요.
 6. **UNMAPPED를 장기 Preference로 저장할지**: 백엔드 계약(6장)에서 미정으로 남겨둔 사항.
-7. **`db_schema.md` 미작성**: 엔티티 설계가 채워지면 6~7장에 반영 필요.
-8. **재탐색(N8) 중간 상태의 영속화 위치**: 후보 제시 → 피드백 → 재탐색이 여러 API 호출에 걸쳐 일어난다면 `MeetingState`가 요청 사이에 어디 남아있는지 명시 필요 (예: LangGraph checkpointer를 `schedule_id` 기준으로 사용).
+7. ~~**`db_schema.md` 미작성**~~ → 작성 완료. 스키마에 맞춰 코드를 정렬했다 (Vocabulary `attribute` 제거·`displayName` 추가, ID를 BIGINT로, `confirmedSlot`을 `confirmed_start_at/end_at` 기준 datetime으로, N2 UI 입력을 `region`/`schedule_search_from,to`/`preferred_time_of_day`로, `strength`를 `WEAK/MODERATE/STRONG`으로).
+8. **재탐색(N8) 중간 상태의 영속화 위치**: 후보 제시 → 피드백 → 재탐색이 여러 API 호출에 걸쳐 일어난다면 `MeetingState`가 요청 사이에 어디 남아있는지 명시 필요 (예: LangGraph checkpointer를 `meeting_id` 기준으로 사용).
+9. **`meeting_chat_messages` / `meeting_memories` 연동 — 보류**: DB에는 대화 원문과 일정별 압축 기억(JSONB)을 저장하는 테이블이 있고, "다음 일정 조율 시 과거 대화 원문 전체가 아니라 같은 그룹의 `meeting_memories.memory`를 우선 전달한다"고 명시돼 있다. 하지만 현재 AI 엔드포인트에는 이 기억을 받는 필드가 없다. 이 서비스의 차별점인 "축적되는 컨텍스트"와 직결되므로 언젠가는 설계해야 하지만, **DB 설정이 끝난 뒤로 미뤄둔 상태다.**

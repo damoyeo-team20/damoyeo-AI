@@ -19,7 +19,8 @@
     }
   }
   ```
-- `strength`는 **`LOW` / `MEDIUM` / `HIGH` 3단계**다 (기획서 12장 오픈 이슈 #2 — 한 차례 연속값안을 채택했다가 2026-08-19 팀 논의로 3단계안으로 재확정). AI는 3단계 값을 그대로 반환하며, 수치 변환이 필요하면 Back이 담당한다.
+- `strength`는 **`WEAK` / `MODERATE` / `STRONG` 3단계**다 — `db_schema.md`의 `user_preferences.strength` 값을 그대로 따른다. AI는 3단계 값을 그대로 반환하며, 수치 변환이 필요하면 Back이 담당한다. **입력으로 받을 때도 동일한 3단계**다 — `/candidates`의 `participantPreferences[].strength`를 포함해 모든 엔드포인트에서 같은 값을 쓴다.
+- ID는 DB 스키마를 따라 정수(BIGINT)다: `userId`, `meetingId` 모두 `number`.
 
 ---
 
@@ -27,13 +28,15 @@
 
 Back이 호스팅, AI가 기동 시 1회 호출해 인메모리 캐싱한다 ([app/services/vocabulary_client.py](../app/services/vocabulary_client.py)).
 
+`preference_vocabulary` 테이블(`code`, `domain`, `parent_code`, `display_name`)을 그대로 내려준다. 스키마에 `attribute` 컬럼은 없으므로 계층은 `parentCode` 하나로만 표현한다.
+
 ```json
 // Response (Back → AI)
 {
   "vocabulary": [
-    { "code": "SEAFOOD", "domain": "FOOD", "attribute": "CATEGORY", "parentCode": null },
-    { "code": "SHELLFISH", "domain": "FOOD", "attribute": "CATEGORY", "parentCode": "SEAFOOD" },
-    { "code": "PORK", "domain": "FOOD", "attribute": "INGREDIENT", "parentCode": "MEAT" }
+    { "code": "SEAFOOD", "domain": "FOOD", "displayName": "해산물", "parentCode": null },
+    { "code": "SHELLFISH", "domain": "FOOD", "displayName": "조개류", "parentCode": "SEAFOOD" },
+    { "code": "PORK", "domain": "FOOD", "displayName": "돼지고기", "parentCode": "MEAT" }
   ]
 }
 ```
@@ -50,7 +53,7 @@ AI 서버는 이 목록으로 매칭 후보(leaf + 상위 카테고리)를 구�
 
 ```json
 {
-  "userId": "string",
+  "userId": 1,
   "message": "해산물은 완전 싫어하는데 조개는 진짜 좋아해. 아 근데 어제 야구 봤어?",
   "conversationId": "string | null"
 }
@@ -61,8 +64,8 @@ AI 서버는 이 목록으로 매칭 후보(leaf + 상위 카테고리)를 구�
 ```json
 {
   "preferences": [
-    { "vocabularyCode": "SEAFOOD", "rawValue": "해산물", "sentiment": "NEGATIVE", "strength": "HIGH", "mappingType": "EXACT" },
-    { "vocabularyCode": "SHELLFISH", "rawValue": "조개", "sentiment": "POSITIVE", "strength": "HIGH", "mappingType": "EXACT" }
+    { "vocabularyCode": "SEAFOOD", "rawValue": "해산물", "sentiment": "NEGATIVE", "strength": "STRONG", "mappingType": "EXACT" },
+    { "vocabularyCode": "SHELLFISH", "rawValue": "조개", "sentiment": "POSITIVE", "strength": "STRONG", "mappingType": "EXACT" }
   ],
   "assistantReply": "야구 재미있으셨겠어요! 어떤 음식 좋아하시는지 더 이야기해 볼까요?"
 }
@@ -87,16 +90,21 @@ AI 서버는 이 목록으로 매칭 후보(leaf + 상위 카테고리)를 구�
 
 ### Request
 
+요청 필드는 `meetings` 테이블 컬럼(`purpose`, `region`, `schedule_search_from/to`, `preferred_time_of_day`)에 1:1로 대응한다.
+
 ```json
 {
-  "hostMessage": "이번엔 팀원들이랑 캐주얼하게 술 한잔 하고 싶어요. 견과류 알레르기 있는 사람 있어서 그건 빼주세요.",
+  "purpose": "이번엔 팀원들이랑 캐주얼하게 술 한잔 하고 싶어요. 견과류 알레르기 있는 사람 있어서 그건 빼주세요.",
   "uiInputs": {
     "region": "강남역",
-    "dateRange": { "start": "2026-08-24", "end": "2026-08-28" },
-    "timeRange": { "start": "18:00", "end": "22:00" }
+    "scheduleSearchFrom": "2026-08-24",
+    "scheduleSearchTo": "2026-08-28",
+    "preferredTimeOfDay": "EVENING"
   }
 }
 ```
+
+`preferredTimeOfDay`는 `DAYTIME` / `LATE_AFTERNOON` / `EVENING` / `ANY` 중 하나다 (구체 시각 범위가 아니다).
 
 ### Response `200`
 
@@ -140,18 +148,25 @@ AI 서버는 이 목록으로 매칭 후보(leaf + 상위 카테고리)를 구�
 
 ```json
 {
-  "confirmedSlot": { "date": "2026-08-25", "startTime": "18:00", "endTime": "21:00" },
+  "confirmedSlot": {
+    "confirmedStartAt": "2026-08-25T18:00:00+09:00",
+    "confirmedEndAt": "2026-08-25T21:00:00+09:00"
+  },
   "region": "강남역",
+  "purpose": "가볍게 술 한잔",
   "meetingContext": { "activityHints": ["술자리"], "meetingTone": "CASUAL" },
   "participantPreferences": [
-    { "userId": "u1", "vocabularyCode": "MEAT", "sentiment": "POSITIVE", "strength": 0.7 },
-    { "userId": "u2", "vocabularyCode": "SEAFOOD", "sentiment": "NEGATIVE", "strength": 0.6 }
+    { "userId": 1, "vocabularyCode": "MEAT", "sentiment": "POSITIVE", "strength": "STRONG" },
+    { "userId": 2, "vocabularyCode": "SEAFOOD", "sentiment": "NEGATIVE", "strength": "MODERATE" }
   ],
   "blockedDomains": ["PC_ROOM"]
 }
 ```
 
-- `participantPreferences`는 Back이 요청 본문에 포함해 주는 형태로 설계했다 (기획서: "Back이 요청에 포함해서 주거나, AI가 Back의 조회용 API를 호출한다" — 어느 쪽인지는 여전히 미확정).
+- `confirmedSlot`은 `meetings.confirmed_start_at` / `confirmed_end_at`(TIMESTAMPTZ)에 대응하는 ISO 8601 datetime이다.
+- `purpose`는 `meetings.purpose`(주최자가 남긴 이번 모임 목적 원문). CONFLICT 응답의 `hostRequest`로 그대로 되돌려주므로, 충돌 안내를 제대로 띄우려면 **반드시 함께 보내야 한다**.
+
+- `participantPreferences`는 Back이 요청 본문에 포함해 주는 형태로 설계했다. `db_schema.md`의 "AI 요청 시 백엔드 조회 흐름"(`meetings → meeting_participants → group_members → users → user_preferences`)과도 일치한다. 각 항목은 `user_preferences` 1행에 대응하며 `strength`는 `/preferences/extract`가 반환한 3단계 값을 그대로 쓴다.
 - `blockedDomains`: 호불호가 크게 갈리는 장소 유형(PC방 등)은 참여자/주최자가 명시적으로 언급하기 전엔 후보로 고려하지 않는다.
 
 ### Response `200` — 정상
@@ -159,17 +174,33 @@ AI 서버는 이 목록으로 매칭 후보(leaf + 상위 카테고리)를 구�
 ```json
 {
   "status": "OK",
+  "meetingTags": [
+    { "code": "ACTIVE", "label": "활동형" },
+    { "code": "ALCOHOL_FRIENDLY", "label": "술 가능" },
+    { "code": "MEAL_INCLUDED", "label": "식사 겸용" }
+  ],
   "candidates": [
     {
-      "activity": "이자카야",
-      "place": { "kakaoPlaceId": "12345678", "name": "산다라 강남점", "address": "서울 강남구 ...", "category": "일식주점" },
+      "activity": "볼링장",
+      "place": {
+        "kakaoPlaceId": "12345678",
+        "name": "건대 스트라이크 볼링장",
+        "address": "광진구 아차산로 200",
+        "category": "스포츠,오락 > 볼링장",
+        "placeUrl": "http://place.map.kakao.com/12345678"
+      },
       "verification": {
         "status": "PASS",
-        "evidence": "네이버 플레이스 기준 매일 17시~02시 영업",
+        "evidence": "네이버 플레이스 기준 토요일 10:00~02:00 영업",
         "source": "naver place",
         "confidence": 0.9
       },
-      "rationale": "참여자 다수가 선호하는 술자리 분위기에 잘 어울리는 장소입니다."
+      "rationale": "활동적인 모임 성향과 왁자지껄한 분위기에 잘 맞는 장소입니다.",
+      "tags": [
+        { "code": "MATCHES_ACTIVITY", "label": "정한 활동에 적합" },
+        { "code": "HIGH_GROUP_FIT", "label": "그룹 선호와 적합도 높음" },
+        { "code": "AVAILABLE_AT_MEETING_TIME", "label": "모임 시간에 이용 가능" }
+      ]
     }
   ],
   "excluded": [
@@ -180,7 +211,40 @@ AI 서버는 이 목록으로 매칭 후보(leaf + 상위 카테고리)를 구�
 }
 ```
 
-- 추천 사유(`rationale`)는 항상 **집단 수준 표현**만 사용한다 ("참여자 선호와 높은 적합도" O, "A가 술을 좋아해서" X).
+### 태그 (`meetingTags`, `candidates[].tags`)
+
+배지 형태로 노출되는 짧은 라벨이다. 모든 태그는 `{code, label}` 쌍으로 내려가므로 **프론트는 별도 매핑 테이블 없이 `label`을 그대로 렌더링**하면 된다. `code`는 이모지·색상 등 스타일 분기에 쓴다.
+
+값은 아래 목록으로 고정돼 있다(LLM이 임의 문자열을 만들지 못하도록 응답 스키마에서 제약). **해당하는 태그가 없으면 빈 배열**이 정상이며, 억지로 채우지 않는다.
+
+`meetingTags` — 참여자 선호를 종합한 "이번 자리의 성격" (N4 판단). 참여자 구성이 바뀌면 태그도 바뀐다.
+4개의 독립된 축으로 구성되며, **같은 축에서는 최대 1개만** 선택된다 (모순 방지를 위해 프롬프트로 강제).
+
+| 축 | code | label |
+| --- | --- | --- |
+| 무엇을 하는가 | `ACTIVE` | 활동형 |
+| 무엇을 하는가 | `CONVERSATION_FOCUSED` | 대화 중심 |
+| 먹고 마시기 (독립) | `MEAL_INCLUDED` | 식사 겸용 |
+| 먹고 마시기 | `ALCOHOL_FRIENDLY` | 술 가능 |
+| 먹고 마시기 | `NO_ALCOHOL` | 술 없이 |
+| 분위기 | `LIVELY` | 왁자지껄 |
+| 분위기 | `QUIET` | 차분한 |
+| 예산 | `BUDGET_FRIENDLY` | 가성비 |
+
+`candidates[].tags` — 개별 장소를 추천한 이유 (N7 판단). 예산 관련 태그는 없다 — Kakao 응답에 가격 정보가 없어 판단 근거가 없기 때문.
+
+| code | label | 생성 주체 |
+| --- | --- | --- |
+| `MATCHES_ACTIVITY` | 정한 활동에 적합 | LLM |
+| `HIGH_GROUP_FIT` | 그룹 선호와 적합도 높음 | LLM |
+| `GOOD_FOR_MEAL` | 식사하기 좋음 | LLM |
+| `GOOD_FOR_DRINKS` | 술자리 적합 | LLM |
+| `AVAILABLE_AT_MEETING_TIME` | 모임 시간에 이용 가능 | **서버(코드)** |
+
+`AVAILABLE_AT_MEETING_TIME`만 LLM이 고르지 않는다. `verification.status == PASS`일 때 서버가 붙이는 사실 정보이며, `UNKNOWN`(영업 여부 미확인)에는 붙지 않는다. LLM에 맡기면 확인되지 않은 영업 정보를 단정할 수 있기 때문이다.
+
+- `place.placeUrl`: Kakao 장소 상세페이지 URL. "가격·사진·리뷰 보기" 링크에 사용. Kakao 응답에 없으면 `null`.
+- 추천 사유(`rationale`)는 항상 **집단 수준 표현**만 사용한다 ("참여자 선호와 높은 적합도" O, "A가 술을 좋아해서" X). 태그로 담기지 않는 뉘앙스를 이 문장이 받는다.
 - `verification.status`는 `PASS` / `FAIL` / `UNKNOWN` 3-state.
   - `FAIL`인 후보는 `candidates` 배열에서 **아예 제외**한다.
   - `UNKNOWN`은 후보에 **포함**하되 표시만 한다. `PASS`/`FAIL`로 임의로 단정하지 않는다.
@@ -198,10 +262,13 @@ AI 서버는 이 목록으로 매칭 후보(leaf + 상위 카테고리)를 구�
     "hostRequest": "가볍게 술 한잔",
     "conflictingPreferences": ["ALCOHOL"]
   },
+  "meetingTags": [],
   "candidates": [],
   "excluded": []
 }
 ```
+
+`hostRequest`는 요청의 `purpose`를 그대로 되돌려준 값이다. CONFLICT일 때는 자리 성격을 확정할 수 없으므로 `meetingTags`도 빈 배열이다.
 
 ### 에러
 
@@ -244,9 +311,28 @@ AI 서버는 이 목록으로 매칭 후보(leaf + 상위 카테고리)를 구�
 ## 아직 열려 있는 사항 (ai-part-proposal.md 12장과 동일)
 
 1. Back-AI 간 인증 방식 (공유 시크릿/mTLS 등) — 미정.
-2. `candidates` 요청 시 `participantPreferences`를 Back이 바디에 포함하는지, AI가 별도 조회를 하는지 — 미정.
+2. ~~`candidates` 요청 시 `participantPreferences`를 Back이 바디에 포함하는지~~ → **Back이 바디에 포함하는 것으로 확정** (`db_schema.md`의 백엔드 조회 흐름 기준).
 3. **L3(시간 교집합) 계산 주체**: AI 파이프라인 노드인지 Back이 계산해서 넘겨주는지 — 미정. 이 저장소는 계산이 끝난 `confirmedSlot`을 받는 것으로 가정하고 L3를 구현하지 않았다.
 4. **자동 예약 방식**: Google Calendar 등록(L9)까지만인지, 실제 예약까지 시도하는지 — 미정. L9도 이 저장소의 구현 대상이 아니다(Back이 직접 처리).
 5. **N8 재탐색 상태의 영속화 위치**: `revision_history`를 어디에 어떻게 누적할지 — 미정.
 6. `UNMAPPED` Preference의 장기 저장 여부 — Back이 결정할 사항, AI는 관여하지 않음.
 7. 모임별 개인 선호를 별도로 저장할지 — "구현해보고 결정"으로 남아있음.
+8. **`meeting_chat_messages` / `meeting_memories` 연동 — 보류**: DB에는 대화 원문과 일정별 압축 기억(JSONB) 테이블이 있고 "다음 일정 조율 시 같은 그룹의 `meeting_memories.memory`를 우선 전달한다"고 되어 있으나, 현재 AI 엔드포인트에는 이 값을 받는 필드가 없다. DB 설정이 끝난 뒤에 설계하기로 하고 이번 범위에서는 다루지 않는다.
+
+## 러프하게 작성해본 api들
+
+1. 온보딩 - 초기 개인 선호도를 자연어로 받아서 유저 DB에 구조화 저장
+2. 온보딩 - 유저 입력에 응답 메시지 출력
+3. 유저 프로필 - 개인 선호도 자연어로 받아서 유저 DB에 구조화 저장(업데이트)(1번 api와 동일하게 처리해도 괜찮아 보임)
+4. 유저 프로필 - 유저 입력에 응답 메시지 출력
+5. 새 일정 - 
+파티장: 모임 컨텍스트 한 문장
+으로 자연어 받아서 모임 컨텍스트 DB에 구조화 저장
+6. 새 일정 - 
+파티장: 지역, 시간
+유저: 날짜, [유저별 개인 프로필 선호도]
+모임: 지난 만남 컨텍스트, 해당 일정 참가자 목록
+으로 추천 제안 출력 (top 3)
+
+출력 : 모임시간, 매장[매장이름, 영업시간, 주소, 인터넷주소], **preference_vocabulary의 domain, 선정사유,** 
+7. 다시 생성하기 - 유저의 응답을 멀티턴으로 듣고 마지막에 최종적으로 정리한 한 문장으로 5의 모임 컨텍스트 DB를 업데이트 하고 다시 6으로 실행.
