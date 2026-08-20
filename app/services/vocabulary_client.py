@@ -1,28 +1,17 @@
-"""Back이 호스팅하는 `GET /internal/preference-vocabulary` 클라이언트.
+"""`preference_vocabulary` 조회.
 
-AI 서버 기동 시 1회 호출해 인메모리에 캐싱한다 (ai-part-proposal.md 6장 기준).
+이전에는 Back의 HTTP 엔드포인트를 호출했지만, DB 소유권이 AI 서비스로 이전되면서
+(~/Downloads/CLAUDE.md 기준) 로컬 DB를 SQLAlchemy로 직접 조회하는 방식으로 바뀌었다.
+N1 파이프라인은 계속 `fetch_vocabulary()`를 그대로 호출한다 — 시그니처는 바뀌지 않았다.
 """
 
-import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.config import get_settings
+from app.core.database import get_sessionmaker
 from app.core.errors import AIServiceError
-
-
-class VocabularyEntry(BaseModel):
-    """`preference_vocabulary` 테이블 1행에 대응 (docs/db_schema.md).
-
-    스키마에 `attribute` 컬럼은 없다. 계층은 `parent_code` 하나로만 표현한다.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    code: str
-    domain: str
-    display_name: str = Field(alias="displayName")
-    parent_code: str | None = Field(default=None, alias="parentCode")
-
+from app.models.vocabulary import PreferenceVocabulary
+from app.schemas.vocabulary import VocabularyEntry
 
 _cache: list[VocabularyEntry] | None = None
 
@@ -32,22 +21,28 @@ async def fetch_vocabulary(force_refresh: bool = False) -> list[VocabularyEntry]
     if _cache is not None and not force_refresh:
         return _cache
 
-    settings = get_settings()
+    session_factory = get_sessionmaker()
     try:
-        async with httpx.AsyncClient(
-            base_url=settings.backend_api_base_url, timeout=10.0
-        ) as client:
-            response = await client.get("/internal/preference-vocabulary")
-            response.raise_for_status()
-            payload = response.json()
-    except httpx.HTTPError as exc:
+        async with session_factory() as session:
+            result = await session.execute(select(PreferenceVocabulary))
+            rows = result.scalars().all()
+    except SQLAlchemyError as exc:
         raise AIServiceError(
             code="VOCABULARY_UNAVAILABLE",
             message=f"Vocabulary 조회 실패: {exc}",
             status_code=503,
+            retryable=True,
         ) from exc
 
-    _cache = [VocabularyEntry.model_validate(item) for item in payload["vocabulary"]]
+    _cache = [
+        VocabularyEntry(
+            code=row.code,
+            domain=row.domain,
+            display_name=row.display_name,
+            parent_code=row.parent_code,
+        )
+        for row in rows
+    ]
     return _cache
 
 

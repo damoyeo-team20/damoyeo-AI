@@ -14,7 +14,7 @@ def test_preference_response_uses_reply_field_name():
     response = PreferenceExtractResponse(reply="말씀해주신 내용을 선호에 반영했어요.")
 
     assert response.model_dump(by_alias=True) == {
-        "preferences": [],
+        "extractedPreferences": [],
         "reply": "말씀해주신 내용을 선호에 반영했어요.",
     }
 

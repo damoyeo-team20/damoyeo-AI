@@ -64,6 +64,8 @@ class ExtractedPreference(BaseModel):
 class PreferenceExtractResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    preferences: list[ExtractedPreference] = Field(default_factory=list)
+    extracted_preferences: list[ExtractedPreference] = Field(
+        default_factory=list, alias="extractedPreferences"
+    )
     # 순수 선호 입력이면 고정 완료 문구, 잡담이 섞였으면 잡담에 대한 응답을 반환한다.
     reply: str | None = None
