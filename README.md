@@ -271,9 +271,9 @@ Agent는 Vocabulary에 없는 새로운 code를 절대 임의로 생성하지 �
 
 로컬 실행은 `docker compose up -d ai` 한 번으로 충분합니다 (`.env`에 `GOOGLE_API_KEY`, `KAKAO_REST_API_KEY`, `BACKEND_API_BASE_URL` 등 필요).
 
-## 트러블슈팅
+## 발표용 AI 설계 정리
 
-[`docs/troubleshooting.md`](docs/troubleshooting.md)
+발표에서 설명할 핵심 AI 설계 의사결정과 동작 원리는 [`docs/presentation-notes.md`](docs/presentation-notes.md)에 정리합니다.
 
 ## 오픈 이슈
 
