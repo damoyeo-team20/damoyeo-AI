@@ -1,9 +1,9 @@
-"""N2 Date Reselector.
+"""Context Date Reselector.
 
 라우터가 "날짜를 바꾸고 싶다"로 분류했을 때만 실행된다. 후보(candidate_dates) 중 사용자가
 실제로 특정한 날짜가 있으면 그쪽으로 selected를 옮기고, 아직 어느 날짜인지 불분명하면 바꾸지
 않고 되묻는다 — chosen_date를 Literal이면서 None도 허용해 억지로 아무 후보나 고르지 않게
-한다. 목록 밖 날짜가 나올 수 없도록 스키마 자체에서 후보로만 제약한다 (n3_schedule_resolver와
+한다. 목록 밖 날짜가 나올 수 없도록 스키마 자체에서 후보로만 제약한다 (n_schedule_resolver와
 같은 방식).
 """
 
@@ -14,7 +14,7 @@ from pydantic import BaseModel, create_model
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.context_state import ContextChatState
-from app.prompts.n2_context_parser import DATE_RESELECT_SYSTEM_PROMPT
+from app.prompts.n_context_date_reselector import DATE_RESELECT_SYSTEM_PROMPT
 from app.schemas.meeting_context import CandidateDate
 
 
@@ -49,7 +49,7 @@ async def reselect_date(state: ContextChatState) -> dict:
             {"role": "user", "content": user},
         ]
     )
-    record_debug("n2_date_reselector", result)  # TEMP DEBUG
+    record_debug("n_context_date_reselector", result)  # TEMP DEBUG
 
     if result.chosen_date is None:
         return {"reply": result.reply, "candidate_dates": candidate_dates}

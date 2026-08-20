@@ -1,4 +1,4 @@
-"""N2 모임 목적 채팅.
+"""Context Parser. 모임 목적 채팅.
 
 두 단계로 나뉜다.
 - `generate_context_reply`: `POST /ai/meetings/{meetingId}/context/messages` — 채팅 한 턴.
@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import extract_text_content, get_llm
 from app.graph.context_state import ContextChatState
-from app.prompts.n2_context_parser import CHAT_SYSTEM_PROMPT, FINALIZE_SYSTEM_PROMPT
+from app.prompts.n_context_parser import CHAT_SYSTEM_PROMPT, FINALIZE_SYSTEM_PROMPT
 from app.schemas.meeting_context import (
     ChatRole,
     ChatTurn,

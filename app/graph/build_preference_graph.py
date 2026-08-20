@@ -8,9 +8,9 @@
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from app.graph.nodes.n1_message_router import route_message
-from app.graph.nodes.n1_preference_extractor import extract_preferences_node
-from app.graph.nodes.n1_smalltalk_handler import acknowledge_preferences_only, handle_smalltalk
+from app.graph.nodes.n_preference_router import route_message
+from app.graph.nodes.n_preference_extractor import extract_preferences_node
+from app.graph.nodes.n_preference_smalltalk import acknowledge_preferences_only, handle_smalltalk
 from app.graph.preference_state import PreferenceState
 
 

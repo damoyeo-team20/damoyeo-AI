@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from app.core.errors import AIServiceError
-from app.graph.nodes.l3_slot_builder import build_slot
+from app.graph.nodes.l_schedule_slot_builder import build_slot
 from app.schemas.schedule import PreferredTimeOfDay
 
 

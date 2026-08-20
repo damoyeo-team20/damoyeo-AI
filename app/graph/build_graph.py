@@ -1,16 +1,17 @@
-"""candidates 파이프라인(N4 -> L5 -> N6 -> N7) LangGraph 조립.
+"""candidates 파이프라인(Activity Decider -> Place Search -> Place Verifier -> Ranker) LangGraph 조립.
 
 `POST /ai/meetings/{meetingId}/candidates`가 이 그래프 하나로 활동 결정 + 장소 검색 +
-영업 검증 + 랭킹을 한 번에 처리한다. N4가 CONFLICT를 반환하면 이후 노드를 실행하지 않고 종료한다.
+영업 검증 + 랭킹을 한 번에 처리한다. Activity Decider가 CONFLICT를 반환하면 이후 노드를
+실행하지 않고 종료한다.
 """
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from app.graph.nodes.l5_kakao_search import search_places
-from app.graph.nodes.n4_activity_decider import decide_activities
-from app.graph.nodes.n6_research_subagent import verify_places
-from app.graph.nodes.n7_ranker_explainer import rank_and_explain
+from app.graph.nodes.l_candidate_place_search import search_places
+from app.graph.nodes.n_candidate_activity_decider import decide_activities
+from app.graph.nodes.n_candidate_place_verifier import verify_places
+from app.graph.nodes.n_candidate_ranker import rank_and_explain
 from app.graph.state import CandidatesState
 
 

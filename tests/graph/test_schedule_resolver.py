@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.graph.nodes import n3_schedule_resolver
+from app.graph.nodes import n_schedule_resolver
 from app.schemas.schedule import ScheduleRequest
 
 
@@ -14,7 +14,7 @@ def test_resolve_schedule_only_picks_from_common_dates(monkeypatch):
         def with_structured_output(self, _schema):
             return _StructuredLLM()
 
-    monkeypatch.setattr(n3_schedule_resolver, "get_llm", lambda: _LLM())
+    monkeypatch.setattr(n_schedule_resolver, "get_llm", lambda: _LLM())
 
     request = ScheduleRequest.model_validate(
         {
@@ -24,7 +24,7 @@ def test_resolve_schedule_only_picks_from_common_dates(monkeypatch):
             "timezone": "Asia/Seoul",
         }
     )
-    response = asyncio.run(n3_schedule_resolver.resolve_schedule(request))
+    response = asyncio.run(n_schedule_resolver.resolve_schedule(request))
 
     assert response.reason == "주말이라 여유 있어요."
     assert response.resolved_start_at.isoformat() == "2026-08-30T18:00:00+09:00"

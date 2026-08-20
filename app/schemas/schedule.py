@@ -58,8 +58,8 @@ class ScheduleResponse(BaseModel):
     - resolvedEndAt이 resolvedStartAt보다 뒤일 것
     - 두 시각의 차이가 정확히 durationMinutes일 것
 
-    세 조건 모두 이 응답을 만드는 `resolve_schedule`(N3)이 구조적으로 보장한다 — 고를 수 있는
-    날짜를 LLM 응답 스키마 자체에서 Literal로 제약하고, 시각은 `l3_slot_builder`가 정확히
+    세 조건 모두 이 응답을 만드는 `resolve_schedule`(Schedule Resolver)이 구조적으로 보장한다 — 고를 수 있는
+    날짜를 LLM 응답 스키마 자체에서 Literal로 제약하고, 시각은 `l_schedule_slot_builder`가 정확히
     duration만큼의 간격으로 계산하기 때문에 별도 런타임 검증이 없어도 어길 수 없다.
     """
 

@@ -1,4 +1,4 @@
-"""N2 Context Router.
+"""Context Router.
 
 candidate_dates가 있을 때만, 이번 발화가 "확정된 날짜를 바꾸고 싶다"는 의사인지 분류한다.
 candidate_dates가 없으면(아직 /schedule 호출 전) LLM 호출 없이 곧장 일반 대화로 판단한다 —
@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.context_state import ContextChatState
-from app.prompts.n2_context_parser import DATE_INTENT_ROUTER_PROMPT
+from app.prompts.n_context_router import DATE_INTENT_ROUTER_PROMPT
 
 
 class _DateIntentResult(BaseModel):
@@ -38,6 +38,6 @@ async def route_context_message(state: ContextChatState) -> dict:
             {"role": "user", "content": user},
         ]
     )
-    record_debug("n2_context_router", result)  # TEMP DEBUG
+    record_debug("n_context_router", result)  # TEMP DEBUG
 
     return {"wants_date_change": result.wants_date_change}

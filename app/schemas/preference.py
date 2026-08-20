@@ -2,7 +2,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# N1 Preference Extractor
+# Preference Extractor
 # 필드 정의는 docs/ai-part-proposal.md 6장(Preference 저장 & Vocabulary 연동 최종 계약) 기준.
 
 

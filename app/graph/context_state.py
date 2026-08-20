@@ -1,4 +1,4 @@
-"""`/ai/meetings/{meetingId}/context/messages`가 실행하는 N2 채팅 한 턴 파이프라인의 상태.
+"""`/ai/meetings/{meetingId}/context/messages`가 실행하는 Context 채팅 한 턴 파이프라인의 상태.
 
 candidate_dates가 있을 때만 라우터가 실제로 날짜 변경 의사를 분류한다. 외부 API 계약
 (app/schemas/meeting_context.py)은 이 분리와 무관하게 그대로 유지된다.

@@ -1,8 +1,8 @@
-"""N3 Schedule Resolver.
+"""Schedule Resolver.
 
 날짜 교집합(어느 날이 전원 가능한지) 자체는 Back이 계산해서 `commonAvailableDates`로 넘겨준다.
 이 노드는 그중 하나를 고르고 이유를 한 줄로 붙인다. 고른 날짜에 대한 구체 시작/종료 시각은
-LLM이 아니라 `l3_slot_builder`가 계산한다 — 시간대 창에 길이를 맞추는 건 판단이 아니라 계산이라
+LLM이 아니라 `l_schedule_slot_builder`가 계산한다 — 시간대 창에 길이를 맞추는 건 판단이 아니라 계산이라
 LLM에 맡기지 않는다.
 
 `POST /ai/meetings/{meetingId}/schedule`가 호출한다.
@@ -15,8 +15,8 @@ from pydantic import BaseModel
 
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
-from app.graph.nodes.l3_slot_builder import build_slot
-from app.prompts.schedule import SYSTEM_PROMPT
+from app.graph.nodes.l_schedule_slot_builder import build_slot
+from app.prompts.n_schedule_resolver import SYSTEM_PROMPT
 from app.schemas.schedule import ScheduleRequest, ScheduleResponse
 
 
@@ -42,7 +42,7 @@ async def resolve_schedule(request: ScheduleRequest) -> ScheduleResponse:
     result = await llm.ainvoke(
         [{"role": "system", "content": system}, {"role": "user", "content": "날짜를 골라줘."}]
     )
-    record_debug("n3_schedule_resolver", result)  # TEMP DEBUG
+    record_debug("n_schedule_resolver", result)  # TEMP DEBUG
 
     chosen_date = date.fromisoformat(result.chosen_date)
     start_at, end_at = build_slot(

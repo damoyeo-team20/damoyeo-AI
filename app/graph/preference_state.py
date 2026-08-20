@@ -1,6 +1,6 @@
-"""`/ai/preferences/extract`가 실행하는 N1 하위 파이프라인의 상태.
+"""`/ai/preferences/extract`가 실행하는 Preference 하위 파이프라인의 상태.
 
-N1을 하나의 프롬프트로 뭉치지 않고 라우터/추출/스몰톡 세 노드로 분리했다.
+하나의 프롬프트로 뭉치지 않고 라우터/추출/스몰톡 세 노드로 분리했다.
 외부 API 계약(app/schemas/preference.py)은 이 분리와 무관하게 그대로 유지된다.
 """
 

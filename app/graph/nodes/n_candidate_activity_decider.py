@@ -1,10 +1,10 @@
-"""N4 Activity Decider.
+"""Candidate Activity Decider.
 
 모임 목적과 참여자 선호를 종합해 무슨 활동을 할지, 이번 자리의 성격 태그, 전체 설명 문장을
 결정한다. candidates 그래프의 진입 노드.
 
-날짜·시간은 이미 `/schedule`(N3)이 확정한 뒤 넘어오므로 이 노드는 관여하지 않는다 — 확정된
-시간은 활동을 고르는 참고 맥락으로만 쓰인다.
+날짜·시간은 이미 `/schedule`(Schedule Resolver)이 확정한 뒤 넘어오므로 이 노드는 관여하지
+않는다 — 확정된 시간은 활동을 고르는 참고 맥락으로만 쓰인다.
 """
 
 from typing import Literal
@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.state import ActivityPlan, CandidatesState
-from app.prompts.n4_activity_decider import SYSTEM_PROMPT
+from app.prompts.n_candidate_activity_decider import SYSTEM_PROMPT
 from app.schemas.candidates import ActionRequired, ActionRequiredType, MeetingTag, to_meeting_tag
 
 
@@ -52,7 +52,7 @@ async def decide_activities(state: CandidatesState) -> dict:
     result: _ActivityDecision = await llm.ainvoke(
         [{"role": "system", "content": system}, {"role": "user", "content": "활동을 결정해줘."}]
     )
-    record_debug("n4_activity_decider", result)  # TEMP DEBUG
+    record_debug("n_candidate_activity_decider", result)  # TEMP DEBUG
 
     if result.status == "CONFLICT":
         return {

@@ -8,9 +8,9 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.graph.context_state import ContextChatState
-from app.graph.nodes.n2_context_parser import generate_reply_node
-from app.graph.nodes.n2_context_router import route_context_message
-from app.graph.nodes.n2_date_reselector import reselect_date
+from app.graph.nodes.n_context_parser import generate_reply_node
+from app.graph.nodes.n_context_router import route_context_message
+from app.graph.nodes.n_context_date_reselector import reselect_date
 
 
 def _route_after_classification(state: ContextChatState) -> str:

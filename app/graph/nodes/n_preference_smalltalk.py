@@ -1,4 +1,4 @@
-"""N1 Smalltalk Handler.
+"""Preference Smalltalk Handler.
 
 라우터가 분리해낸 잡담 부분에 짧게 반응하면서, Vocabulary에 실제로 존재하는 카테고리를 근거로
 사용자가 어떤 선호를 말하면 되는지 구체적으로 유도한다.
@@ -10,7 +10,7 @@ from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.errors import AIServiceError
 from app.core.llm import extract_text_content, get_llm
 from app.graph.preference_state import PreferenceState
-from app.prompts.n1_smalltalk_handler import SYSTEM_PROMPT
+from app.prompts.n_preference_smalltalk import SYSTEM_PROMPT
 from app.services.vocabulary_client import VocabularyEntry, fetch_vocabulary
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ async def handle_smalltalk(state: PreferenceState) -> dict:
     )
 
     reply = extract_text_content(response.content)
-    record_debug("n1_smalltalk_handler", {"reply": reply})  # TEMP DEBUG
+    record_debug("n_preference_smalltalk", {"reply": reply})  # TEMP DEBUG
     return {"assistant_reply": reply}
 
 

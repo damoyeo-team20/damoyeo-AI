@@ -1,12 +1,12 @@
-"""N7 Ranker & Explainer.
+"""Candidate Ranker & Explainer.
 
 검증을 통과한(또는 UNKNOWN인) 후보 중 최대 3개를 골라 순위와 추천 사유를 작성하고, 최종
 `Suggestion` 목록을 만든다. FAIL 판정된 후보는 여기서 제외된다 (폐점·휴무인 곳은 반환하지 않는다).
 
 사실 판정에 해당하는 값은 LLM이 아니라 코드가 붙인다:
-  - AVAILABLE_AT_MEETING_TIME 태그와 openAtMeetingTime : N6 검증 결과에서 파생
+  - AVAILABLE_AT_MEETING_TIME 태그와 openAtMeetingTime : Place Verifier 검증 결과에서 파생
   - matchedPreferenceDomains : LLM이 고른 코드를 Vocabulary로 domain 변환
-  - proposedStartAt/EndAt : l3_slot_builder가 계산한 값
+  - proposedStartAt/EndAt : l_schedule_slot_builder가 계산한 값
 """
 
 import logging
@@ -18,7 +18,7 @@ from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.errors import AIServiceError
 from app.core.llm import get_llm
 from app.graph.state import CandidatesState, VerifiedPlace
-from app.prompts.n7_ranker_explainer import SYSTEM_PROMPT
+from app.prompts.n_candidate_ranker import SYSTEM_PROMPT
 from app.schemas.candidates import (
     CandidateTag,
     PlaceProvider,
@@ -76,7 +76,7 @@ async def rank_and_explain(state: CandidatesState) -> dict:
     if not eligible:
         return {"suggestions": []}
 
-    # N4가 활동 유형별로 남긴 집단 수준 사유를 참고 맥락으로 함께 전달한다.
+    # Activity Decider가 활동 유형별로 남긴 집단 수준 사유를 참고 맥락으로 함께 전달한다.
     activity_rationales = {a["activity"]: a["rationale_group"] for a in state.get("activities", [])}
     preferences = state.get("participant_preferences", [])
 
@@ -99,7 +99,7 @@ async def rank_and_explain(state: CandidatesState) -> dict:
     result: _RankingResult = await llm.ainvoke(
         [{"role": "system", "content": system}, {"role": "user", "content": "최대 3개를 골라줘."}]
     )
-    record_debug("n7_ranker_explainer", result)  # TEMP DEBUG
+    record_debug("n_candidate_ranker", result)  # TEMP DEBUG
 
     requested_codes = {p.vocabulary_code for p in preferences}
     domain_by_code = await _domains_by_code(requested_codes)

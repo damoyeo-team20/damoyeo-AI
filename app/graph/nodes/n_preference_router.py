@@ -1,4 +1,4 @@
-"""N1 Message Router.
+"""Preference Router.
 
 발화를 "선호 관련 부분"과 "잡담 부분"으로 분리한다. 이후 두 노드(추출/스몰톡)로 팬아웃하기 위한
 전처리 노드 — 자체적으로 선호를 추출하거나 응답을 만들지 않는다.
@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.preference_state import PreferenceState
-from app.prompts.n1_message_router import SYSTEM_PROMPT, USER_TEMPLATE
+from app.prompts.n_preference_router import SYSTEM_PROMPT, USER_TEMPLATE
 
 
 class _RouteResult(BaseModel):
@@ -27,7 +27,7 @@ async def route_message(state: PreferenceState) -> dict:
             {"role": "user", "content": user},
         ]
     )
-    record_debug("n1_message_router", result)  # TEMP DEBUG
+    record_debug("n_preference_router", result)  # TEMP DEBUG
 
     return {
         "preference_text": result.preference_text,

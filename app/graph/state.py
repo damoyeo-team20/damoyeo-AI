@@ -1,7 +1,8 @@
-"""`/ai/meetings/{meetingId}/candidates`가 실행하는 N4 -> L5 -> N6 -> N7 파이프라인의 상태.
+"""`/ai/meetings/{meetingId}/candidates`가 실행하는
+Activity Decider -> Place Search -> Place Verifier -> Ranker 파이프라인의 상태.
 
-날짜·시간 확정(N3)은 `/schedule` 별도 엔드포인트가 담당하고, 이 그래프는 이미 확정된
-`confirmed_slot`을 받아서 그 시각에 맞는 장소만 찾는다.
+날짜·시간 확정(Schedule Resolver)은 `/schedule` 별도 엔드포인트가 담당하고, 이 그래프는 이미
+확정된 `confirmed_slot`을 받아서 그 시각에 맞는 장소만 찾는다.
 """
 
 from datetime import datetime
@@ -60,18 +61,18 @@ class CandidatesState(TypedDict, total=False):
     meeting_memory_summary: str | None
     excluded_external_place_ids: list[str]
 
-    # N4 산출물
+    # Activity Decider 산출물
     activities: list[ActivityPlan]
     action_required: ActionRequired | None
     meeting_tags: list[Tag]
     summary: str
 
-    # L5 산출물
+    # Place Search 산출물
     place_candidates: list[PlaceCandidate]
 
-    # N6 산출물
+    # Place Verifier 산출물
     verified_places: list[VerifiedPlace]
     verification_timed_out: bool
 
-    # N7 산출물
+    # Ranker 산출물
     suggestions: list[Suggestion]

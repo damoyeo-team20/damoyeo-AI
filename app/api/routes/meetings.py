@@ -3,8 +3,8 @@ from fastapi import APIRouter
 from app.core.errors import AIServiceError
 from app.graph.build_context_graph import get_context_graph
 from app.graph.build_graph import get_candidates_graph
-from app.graph.nodes.n2_context_parser import finalize_meeting_context
-from app.graph.nodes.n3_schedule_resolver import resolve_schedule
+from app.graph.nodes.n_context_parser import finalize_meeting_context
+from app.graph.nodes.n_schedule_resolver import resolve_schedule
 from app.schemas.candidates import (
     ActionRequired,
     ActionRequiredType,

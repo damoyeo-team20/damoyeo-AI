@@ -1,4 +1,4 @@
-"""N1 Preference Extractor.
+"""Preference Extractor.
 
 라우터가 분리해낸 "선호 관련 텍스트"를 Vocabulary 매핑된 구조화 선호로 변환한다.
 """
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, create_model
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.preference_state import PreferenceState
-from app.prompts.n1_preference_extractor import SYSTEM_PROMPT, USER_TEMPLATE
+from app.prompts.n_preference_extractor import SYSTEM_PROMPT, USER_TEMPLATE
 from app.schemas.preference import ExtractedPreference, MappingType, Sentiment, Strength
 from app.services.vocabulary_client import VocabularyEntry, fetch_vocabulary
 
@@ -64,7 +64,7 @@ async def extract_preferences(text: str) -> list[ExtractedPreference]:
             {"role": "user", "content": user},
         ]
     )
-    record_debug("n1_preference_extractor", result.preferences)  # TEMP DEBUG
+    record_debug("n_preference_extractor", result.preferences)  # TEMP DEBUG
 
     preferences = []
     for item in result.preferences:

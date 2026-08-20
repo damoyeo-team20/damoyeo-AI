@@ -1,4 +1,4 @@
-"""Kakao Local API 클라이언트. candidates 파이프라인의 L5 노드가 사용한다."""
+"""Kakao Local API 클라이언트. candidates 파이프라인의 Place Search 노드가 사용한다."""
 
 import httpx
 from pydantic import BaseModel

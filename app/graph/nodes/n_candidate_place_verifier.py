@@ -1,4 +1,4 @@
-"""N6 Research Sub-Agent.
+"""Candidate Place Verifier (Research Sub-Agent).
 
 후보 장소별 영업시간/휴무일을 병렬로 검증한다. 검증 범위는 영업시간·휴무일로만 한정한다
 (주차·웨이팅·가격 등은 다루지 않는다). PASS/FAIL/UNKNOWN 3-state를 유지하며, UNKNOWN을 임의로
@@ -19,7 +19,7 @@ from app.core.config import get_settings
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import extract_text_content, get_llm
 from app.graph.state import CandidatesState, PlaceCandidate, VerifiedPlace
-from app.prompts.n6_research_subagent import CLASSIFY_SYSTEM_PROMPT, SEARCH_PROMPT
+from app.prompts.n_candidate_place_verifier import CLASSIFY_SYSTEM_PROMPT, SEARCH_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ async def _verify_one(
     # 항상 UNKNOWN으로 둔다 (거짓 PASS/FAIL을 만들지 않음 — 기존 3-state를 그대로 활용).
     if get_settings().skip_business_hours_verification:
         record_debug(  # TEMP DEBUG
-            "n6_research_subagent", {"place": place["name"], "skipped": True}
+            "n_candidate_place_verifier", {"place": place["name"], "skipped": True}
         )
         return {
             "activity": place["activity"],
@@ -82,11 +82,11 @@ async def _verify_one(
     except Exception as exc:
         logger.exception("영업 검증 실패: %s", place["name"])
         record_debug(  # TEMP DEBUG
-            "n6_research_subagent", {"place": place["name"], "error": repr(exc)}
+            "n_candidate_place_verifier", {"place": place["name"], "error": repr(exc)}
         )
     else:
         record_debug(  # TEMP DEBUG
-            "n6_research_subagent",
+            "n_candidate_place_verifier",
             {"place": place["name"], "search_text": search_text, "classification": classification.model_dump()},
         )
 

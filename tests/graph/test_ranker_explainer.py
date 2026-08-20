@@ -2,7 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from app.graph.nodes import n7_ranker_explainer
+from app.graph.nodes import n_candidate_ranker
 from app.schemas.candidates import ConfirmedSlot, MeetingInput, ParticipantPreference
 from app.schemas.preference import Sentiment, Strength
 from app.services.vocabulary_client import VocabularyEntry
@@ -69,10 +69,10 @@ def _run(monkeypatch, places, ranked):
             VocabularyEntry(code="SPICY_FOOD", domain="FOOD", display_name="매운 음식", parent_code=None)
         ]
 
-    monkeypatch.setattr(n7_ranker_explainer, "get_llm", lambda: _LLM())
-    monkeypatch.setattr(n7_ranker_explainer, "fetch_vocabulary", fake_fetch_vocabulary)
+    monkeypatch.setattr(n_candidate_ranker, "get_llm", lambda: _LLM())
+    monkeypatch.setattr(n_candidate_ranker, "fetch_vocabulary", fake_fetch_vocabulary)
 
-    return asyncio.run(n7_ranker_explainer.rank_and_explain(_state(places)))["suggestions"]
+    return asyncio.run(n_candidate_ranker.rank_and_explain(_state(places)))["suggestions"]
 
 
 def test_pass_place_gets_availability_tag_and_open_flag(monkeypatch):

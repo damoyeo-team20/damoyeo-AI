@@ -6,10 +6,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.preference import Sentiment, Strength
 
 # `POST /ai/meetings/{meetingId}/candidates` 계약.
-# 필드는 docs/api-design2-backend.md 6장 기준이며, 파이프라인은 N4 -> L5 -> N6 -> N7이다.
+# 필드는 docs/api-design2-backend.md 6장 기준이며, 파이프라인은
+# Activity Decider -> Place Search -> Place Verifier -> Ranker이다.
 #
-# 날짜/시각 확정은 이 API의 일이 아니다 — `POST /ai/meetings/{meetingId}/schedule`(N3)이 먼저
-# 확정한 `confirmedSlot`을 그대로 받아서 그 시각에 맞는 장소만 고른다.
+# 날짜/시각 확정은 이 API의 일이 아니다 — `POST /ai/meetings/{meetingId}/schedule`(Schedule
+# Resolver)이 먼저 확정한 `confirmedSlot`을 그대로 받아서 그 시각에 맞는 장소만 고른다.
 
 
 class ConfirmedSlot(BaseModel):
@@ -133,11 +134,11 @@ class MeetingTag(str, Enum):
 class CandidateTag(str, Enum):
     """개별 장소를 추천한 이유 (후보 수준).
 
-    N7이 실제로 받는 정보(활동 유형, 장소명, 카테고리, 모임 목적)로 판단 가능한 것만 둔다.
+    Ranker가 실제로 받는 정보(활동 유형, 장소명, 카테고리, 모임 목적)로 판단 가능한 것만 둔다.
     근거가 없는 태그를 목록에 넣으면 LLM이 아무 후보에나 붙인다 — 예산 관련 태그를 뺀 이유다
     (Kakao 응답에 가격 정보가 없어 판단할 근거 자체가 없음).
 
-    AVAILABLE_AT_MEETING_TIME은 LLM이 고르지 않는다 — 영업 검증(N6) 결과에서 코드로 파생한다.
+    AVAILABLE_AT_MEETING_TIME은 LLM이 고르지 않는다 — 영업 검증(Place Verifier) 결과에서 코드로 파생한다.
     사실 판정이라 LLM이 지어내면 거짓 정보가 되기 때문.
     """
 

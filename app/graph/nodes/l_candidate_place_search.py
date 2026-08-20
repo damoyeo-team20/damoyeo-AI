@@ -1,8 +1,9 @@
-"""L5 Kakao Local 검색. 비-LLM 노드.
+"""Candidate Place Search. Kakao Local 검색. 비-LLM 노드.
 
-N4가 결정한 활동별 검색어(들)로 Kakao Local API를 호출하고, 중복 제거 후 활동별 상위 N개를 남긴다.
-이미 보여준 장소(`excluded_external_place_ids`)는 여기서 걸러내 이후 노드로 넘기지 않는다 —
-검증(N6)과 랭킹(N7) 비용을 아끼기 위해 가능한 한 앞에서 제외한다.
+Activity Decider가 결정한 활동별 검색어(들)로 Kakao Local API를 호출하고, 중복 제거 후
+활동별 상위 N개를 남긴다. 이미 보여준 장소(`excluded_external_place_ids`)는 여기서 걸러내
+이후 노드로 넘기지 않는다 — 검증(Place Verifier)과 랭킹(Ranker) 비용을 아끼기 위해 가능한 한
+앞에서 제외한다.
 """
 
 from app.graph.state import CandidatesState, PlaceCandidate
