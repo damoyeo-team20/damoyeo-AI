@@ -55,7 +55,9 @@ Back이 담당하는 것:
 - `messages`에는 이번 요청에서 새로 제출한 문장만 넣는다.
 - 모든 path의 `meetingId`는 1 이상의 정수다.
 - 표의 `필수=O`는 key 필수, `nullable=O`는 key는 필수지만 값으로 `null`을 허용한다는 뜻이다.
-- 내부 인증 방식은 별도 합의 후 `/ai/**`와 `/internal/**`에 공통 적용한다.
+- **내부 인증 방식 확정.** 두 방향의 보호 수단이 다르다.
+  - **AI → Back** (`GET /internal/preference-vocabulary`): 공유 비밀값 `INTERNAL_API_KEY`를 **`X-Internal-Api-Key` 헤더**에 실어 보낸다 (실제 Back 컨테이너 응답으로 확인 완료 — 다른 헤더 이름은 401, 이 이름만 200). Back이 이 값을 검사한다.
+  - **Back → AI** (`/ai/**` 전체): 애플리케이션 레벨 인증을 하지 않는다. 대신 **네트워크 레벨**에서 AI 서비스를 Back 서버만 접근 가능하도록 방화벽/보안 그룹으로 제한한다 — AI 서비스는 공인 IP로 노출하지 않는다. 이 전제가 깨지면(AI를 공개 네트워크에 올리면) `/ai/**`는 인증 없이 완전히 열린 상태가 되므로, 배포 환경이 바뀔 때마다 이 전제가 여전히 유효한지 반드시 재확인한다.
 
 ### 공통 오류 형식
 
@@ -599,7 +601,7 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 
 API의 큰 경계와 필드는 정의할 수 있지만 다음 정책은 팀 합의가 필요하다.
 
-1. **Back↔AI 인증 방식**: 공유 Bearer token과 mTLS 중 무엇을 사용할지.
+1. ~~**Back↔AI 인증 방식**~~ → **확정.** AI→Back은 `INTERNAL_API_KEY` 공유 비밀값을 `X-Internal-Api-Key` 헤더로 전송(코드 반영 완료, 실제 컨테이너 간 통신으로 검증됨), Back→AI는 앱 레벨 인증 없이 네트워크 방화벽으로 AI를 Back 서버 전용으로 제한(1장 "기본 규칙" 참고). AI가 공개 네트워크에 노출되지 않는다는 전제가 계속 유효해야 안전하다.
 2. **날짜보다 세밀한 가능 시간**: MVP는 날짜 단위 `commonAvailableDates`만 받는다. 사용자별 시간 단위 가능 여부가 필요하면 `commonAvailableSlots[{startAt,endAt}]` 형태로 확장해야 한다.
 3. **Meeting Memory 생성 주체와 갱신 시점**: AI 입력을 최소한의 `summary`로 정했지만 언제 요약하고 갱신할지는 미정이다.
 4. **Vocabulary 캐시 갱신**: TTL, Back 변경 알림 또는 수동 refresh 중 어떤 방식을 쓸지.

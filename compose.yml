@@ -7,20 +7,20 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-damoyeo}
       DB_USERNAME: ${POSTGRES_USER:-damoyeo}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-damoyeo}
-      # 로컬에서 실행 중인 FastAPI를 백엔드 컨테이너에서 호출할 때 사용한다.
-      AI_BASE_URL: http://host.docker.internal:${AI_PORT:-8000}
+      # AI도 같은 compose 네트워크의 서비스 이름(ai)으로 호출한다.
+      AI_BASE_URL: http://ai:${AI_PORT:-8000}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-ai-key}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-local-client-id}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-client-secret}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8080/login/oauth2/code/google}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
       SESSION_COOKIE_SECURE: "false"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      ai:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health >/dev/null || exit 1"]
@@ -28,6 +28,30 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    restart: unless-stopped
+
+  ai:
+    build: .
+    image: ${AI_IMAGE:-damoyeo-ai:local}
+    container_name: damoyeo-ai
+    environment:
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:?GOOGLE_API_KEY를 .env에 설정하세요}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:?KAKAO_REST_API_KEY를 .env에 설정하세요}
+      # Compose 네트워크 안에서는 localhost가 아닌 Back 서비스 이름으로 접속한다.
+      BACKEND_API_BASE_URL: http://backend:8080
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-ai-key}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-damoyeo-ai}
+    ports:
+      - "${AI_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
 
   postgres:

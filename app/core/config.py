@@ -20,6 +20,8 @@ class Settings(BaseSettings):
 
     # Backend (Vocabulary API 등)
     backend_api_base_url: str = "http://localhost:8080"
+    # AI -> Back 호출에 실어 보내는 공유 비밀값. Back과 반드시 같은 값이어야 한다.
+    internal_api_key: str = ""
 
     # DB (AI 서비스가 직접 소유하는 preference_vocabulary 등)
     database_url: str = "postgresql+asyncpg://localhost:5432/damoyeo_ai"

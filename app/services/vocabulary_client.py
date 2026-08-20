@@ -23,9 +23,12 @@ async def fetch_vocabulary(force_refresh: bool = False) -> list[VocabularyEntry]
         return _cache
 
     settings = get_settings()
+    # 헤더 이름은 Back 소스로 확인된 게 아니라 응답 코드 차이(다른 이름은 401, 이 이름은 400)로
+    # 추정한 값이다 — Back 팀 확인 전까지는 최종 확정이 아니다.
+    headers = {"X-Internal-Api-Key": settings.internal_api_key}
     try:
         async with httpx.AsyncClient(
-            base_url=settings.backend_api_base_url, timeout=10.0
+            base_url=settings.backend_api_base_url, timeout=10.0, headers=headers
         ) as client:
             response = await client.get("/internal/preference-vocabulary")
             response.raise_for_status()
