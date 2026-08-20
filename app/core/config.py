@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # DB (AI 서비스가 직접 소유하는 preference_vocabulary 등)
     database_url: str = "postgresql+asyncpg://localhost:5432/damoyeo_ai"
 
+    # TODO: 임시 플래그. N6 영업 검증이 Gemini google_search 할당량 문제로 테스트를 막고 있어서
+    # 우회용으로 추가함 (2026-08-20). 원인(할당량) 해결되면 이 플래그와 관련 분기를 지운다.
+    skip_business_hours_verification: bool = False
+
     # LangSmith
     langsmith_tracing: bool = False
     langsmith_api_key: str = ""

@@ -44,6 +44,8 @@ services:
       LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-damoyeo-ai}
+      # TODO: 임시. N6 영업 검증(Gemini google_search)이 할당량 문제로 테스트를 막아서 우회용.
+      SKIP_BUSINESS_HOURS_VERIFICATION: ${SKIP_BUSINESS_HOURS_VERIFICATION:-false}
     ports:
       # TODO: 임시로 전체 공개 — 원래는 127.0.0.1로만 바인딩해서 Back만 접근하게 해야 한다.
       # 잠깐 쓰고 정리할 예정이라 되돌려둠 (2026-08-20, 호찬 요청).

@@ -15,6 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.core.config import get_settings
 from app.core.llm import extract_text_content, get_llm
 from app.graph.state import CandidatesState, PlaceCandidate, VerifiedPlace
 from app.prompts.n6_research_subagent import CLASSIFY_SYSTEM_PROMPT, SEARCH_PROMPT
@@ -35,6 +36,23 @@ async def _verify_one(
     place: PlaceCandidate, date: str, start_time: str, end_time: str
 ) -> VerifiedPlace:
     classification = _Classification(status="UNKNOWN")
+    # 임시 우회: Gemini google_search 할당량 문제로 테스트가 막혀서, 검증 자체를 건너뛰고
+    # 항상 UNKNOWN으로 둔다 (거짓 PASS/FAIL을 만들지 않음 — 기존 3-state를 그대로 활용).
+    if get_settings().skip_business_hours_verification:
+        return {
+            "activity": place["activity"],
+            "kakao_place_id": place["kakao_place_id"],
+            "name": place["name"],
+            "address": place["address"],
+            "category": place["category"],
+            "place_url": place["place_url"],
+            "latitude": place["latitude"],
+            "longitude": place["longitude"],
+            "verification_status": classification.status,
+            "business_hours": classification.business_hours,
+            "verification_source": classification.source,
+            "checked_at": datetime.now(UTC),
+        }
     try:
         search_llm = get_llm().bind_tools([{"google_search": {}}])
         search_response = await search_llm.ainvoke(
