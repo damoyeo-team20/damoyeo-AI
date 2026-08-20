@@ -1,35 +1,4 @@
 services:
-  backend:
-    image: ${BACKEND_IMAGE:-ghcr.io/damoyeo-team20/damoyeo-be:latest}
-    container_name: damoyeo-backend
-    environment:
-      # Compose 네트워크 안에서는 localhost가 아닌 DB 서비스 이름으로 접속한다.
-      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-damoyeo}
-      DB_USERNAME: ${POSTGRES_USER:-damoyeo}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-damoyeo}
-      # AI도 같은 compose 네트워크의 서비스 이름(ai)으로 호출한다.
-      AI_BASE_URL: http://ai:${AI_PORT:-8000}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-ai-key}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-local-client-id}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-client-secret}
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8080/login/oauth2/code/google}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
-      SESSION_COOKIE_SECURE: "false"
-    ports:
-      - "${BACKEND_PORT:-8080}:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      ai:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health >/dev/null || exit 1"]
-      interval: 1m
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-    restart: unless-stopped
-
   ai:
     build: .
     image: ${AI_IMAGE:-damoyeo-ai:local}
@@ -38,14 +7,20 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:?GOOGLE_API_KEY를 .env에 설정하세요}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:?KAKAO_REST_API_KEY를 .env에 설정하세요}
-      # Compose 네트워크 안에서는 localhost가 아닌 Back 서비스 이름으로 접속한다.
-      BACKEND_API_BASE_URL: http://backend:8080
+      # Back은 이제 이 compose 밖(백엔드 팀이 별도로 배포, 실제 RDS 연결)에서 돈다.
+      # 로컬 개발 중이면 http://localhost:8080, 배포 환경이면 실제 Back 주소를 .env에 넣는다.
+      BACKEND_API_BASE_URL: ${BACKEND_API_BASE_URL:?BACKEND_API_BASE_URL을 .env에 설정하세요}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-ai-key}
       LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-damoyeo-ai}
       # TODO: 임시. N6 영업 검증(Gemini google_search)이 할당량 문제로 테스트를 막아서 우회용.
       SKIP_BUSINESS_HOURS_VERIFICATION: ${SKIP_BUSINESS_HOURS_VERIFICATION:-false}
+    # Back이 더 이상 이 compose가 관리하는 서비스가 아니라, 같은 호스트에 떠 있는 컨테이너를
+    # host.docker.internal로 부른다. 백엔드 팀이 별도 서버로 옮기면 BACKEND_API_BASE_URL만
+    # 바꾸면 되고 이 설정은 지워도 된다.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # TODO: 임시로 전체 공개 — 원래는 127.0.0.1로만 바인딩해서 Back만 접근하게 해야 한다.
       # 잠깐 쓰고 정리할 예정이라 되돌려둠 (2026-08-20, 호찬 요청).
@@ -57,26 +32,3 @@ services:
       retries: 12
       start_period: 10s
     restart: unless-stopped
-
-  postgres:
-    image: postgres:17-alpine
-    container_name: damoyeo-postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-damoyeo}
-      POSTGRES_USER: ${POSTGRES_USER:-damoyeo}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-damoyeo}
-    ports:
-      # TODO: 임시로 전체 공개 — 기본 비밀번호(damoyeo/damoyeo)라 원래는 127.0.0.1만 허용해야 한다.
-      # 잠깐 쓰고 정리할 예정이라 되돌려둠 (2026-08-20, 호찬 요청).
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - damoyeo-postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 1m
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
-volumes:
-  damoyeo-postgres-data:
