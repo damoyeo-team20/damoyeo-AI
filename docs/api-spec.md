@@ -1,5 +1,10 @@
 # API 명세서
 
+> ⚠️ **지난 작업 기록. 현재 계약의 기준이 아니다.**
+> 이 문서로 화면 단위 검토를 마쳤고 결론은 전부 [`api-design2-backend.md`](api-design2-backend.md)에 반영됐다.
+> 지금 구현·연동의 기준은 그 문서이며, 여기와 내용이 다르면 그 문서가 맞다.
+> 이 문서는 "왜 그렇게 결정했는지"의 근거를 되짚을 때만 본다.
+
 프로토타입 화면을 하나씩 보면서, 그 화면이 실제로 필요로 하는 요청/응답 필드를 정확히 확정해나가는 문서다.
 
 - **`api-design.md`와의 관계**: `api-design.md`는 파이프라인(N1~N9) 노드 단위로 설계된 기존 명세다. 이 문서는 반대로 **화면 단위**로 시작해서, 화면이 실제로 뭘 주고받아야 하는지 먼저 정하고 기존 명세와 대조한다. 화면 검토가 끝나면 확정된 내용을 `api-design.md`에 반영해 하나로 합친다.
@@ -99,7 +104,7 @@ LLM 호출 또는 structured output 파싱 실패에 대한 Back↔AI 공통 에
 
 **3.** ~~필드명 `reply` vs `assistantReply`~~ → **`reply`로 통일 완료.** 의미가 같은 필드에 굳이 다른 이름을 쓰지 않고 백엔드 예시와 맞췄다 — Back이 가공 없이 그대로 Front에 전달(passthrough)하는 구조라 이름이 다르면 그대로 Front까지 노출되기 때문이다.
 
-**3-1.** ~~선호 배열명 `preferences` vs `extractedPreferences`~~ → **`extractedPreferences`로 통일 완료** (`api-design2.md` 12장에서 확정, `ExtractedPreference` 응답 모델에 반영). Back↔AI와 Front↔Back 양쪽 모두 같은 이름을 쓴다.
+**3-1.** ~~선호 배열명 `preferences` vs `extractedPreferences`~~ → **`extractedPreferences`로 통일 완료** (`ExtractedPreference` 응답 모델에 반영). Back↔AI와 Front↔Back 양쪽 모두 같은 이름을 쓴다.
 
 **4.** ~~`reply`가 잡담이 섞였을 때만 채워진다~~ → **반영 완료.** 처음엔 "스몰톡 핸들러를 잡담 없어도 돌리자"로 접근했는데, 다시 보니 완료 통보와 스몰톡 반응은 생성 경로가 달라야 했다.
 

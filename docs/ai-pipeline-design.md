@@ -1,4 +1,7 @@
 # AI Pipeline Design
+
+> ⚠️ **기획 단계 문서.** 설계 배경 참고용이며 현재 API 계약의 기준이 아니다.
+> 실제 Back↔AI 계약은 [`api-design2-backend.md`](api-design2-backend.md)를 본다.
 ## 1. 선호 저장 구조: 어떻게 할 것인가
 
 ### 결론부터

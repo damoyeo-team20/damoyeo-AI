@@ -1,10 +1,32 @@
 # 다모여 Back ↔ AI API 명세
 
-> 백엔드 공유용 축약본
+> Back↔AI 계약의 **단일 기준 문서**다. 요청/응답 형태에 대해 다른 문서와 내용이 다르면 이 문서가 맞다.
 >
 > 모든 AI API는 동기 JSON API다. 비동기 run, polling, DB 저장과 generation 관리는 Back이 담당한다.
 
 ## 1. 공통
+
+### 역할 분담
+
+AI 서비스가 담당하는 것:
+
+- 자연어에서 장기 개인 선호를 추출하고 Vocabulary에 매핑
+- 모임 목적 대화 응대와 한 문장 요약
+- 참여자 날짜·선호·과거 모임 요약을 종합해 시간·장소 후보 생성
+- 장소 검색 결과의 영업 정보 검증과 그룹 수준 선정 사유 생성
+
+Back이 담당하는 것:
+
+- 사용자 인증·인가와 일정 생성자 권한 확인
+- DB 조회·저장·UPSERT와 트랜잭션
+- AI 입출력의 스키마·Vocabulary·날짜·장소 검증
+- 비동기 작업(run), polling, generation 및 멱등성 관리
+- 모임 상태 전이와 제안 확정
+- Google Calendar OAuth 및 이벤트 생성
+
+**AI 서비스는 DB에 직접 접근하지 않는다.** 이 문서에서 "선호 저장", "목적 업데이트", "제안 저장"이라고 표현한 흐름도 실제 쓰기는 전부 Back이 수행한다.
+
+**AI는 호출 사이에 상태를 저장하지 않는다.** 대화 이력(`history`), 누적 제외 목록(`excludedExternalPlaceIds`) 등 이전 호출의 맥락이 필요한 값은 Back이 매 요청마다 통째로 다시 보내야 한다.
 
 ### 엔드포인트
 
@@ -19,7 +41,7 @@
 
 전용 재생성(`/revise`) API는 없다. "재생성"은 제품 흐름상 "뒤로가기"로 단순화됐다 — Back이 `/context/messages`로 되돌아가 다시 대화하고 `/context`로 재요약한 뒤 `/candidates`를 다시 호출한다. 이전에 보여준 장소는 `/candidates`의 `excludedExternalPlaceIds`에 누적해서 채운다(6장 참고). 코드에서도 `/revise` 라우트와 관련 스키마·노드를 제거했다.
 
-🔴로 표시한 항목은 이 문서의 계약대로 지금 당장 연동하면 실패한다. 상세 격차는 [`api-design2.md`](api-design2.md) 13장 참고.
+🔴로 표시한 항목은 이 문서의 계약대로 지금 당장 연동하면 실패한다. `/candidates`의 현재 코드는 이미 확정된 `confirmedSlot`을 받는 평면 구조이고 응답도 `suggestions`가 아닌 중첩형 `candidates`라, 6장 계약에 맞추는 작업이 남아 있다.
 
 ### 기본 규칙
 
@@ -519,3 +541,35 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 4. 특정 장소 하나만 콕 집어 제외하는 대화형 협상은 지원하지 않는다 — 다시 시작하면 이전에 보여준 것 전체가 제외 대상이다.
 
 단일 `feedback` 기반이던 기존 `/revise` 코드(라우트·스키마·노드)는 삭제했다.
+
+---
+
+## 8. 확인 필요 사항
+
+API의 큰 경계와 필드는 정의할 수 있지만 다음 정책은 팀 합의가 필요하다.
+
+1. **Back↔AI 인증 방식**: 공유 Bearer token과 mTLS 중 무엇을 사용할지.
+2. **시간 교집합(L3) 계산 주체**: AI의 비-LLM 단계가 참여자 날짜 교집합을 계산하는 안을 검토했으나 확정된 게 아니다. Back이 계산해서 `confirmedSlot`으로 넘겨주는 기존 안과 아직 결론 나지 않았고 추후 다시 논의한다. `participants[].selectedDates` 입력과 "AI가 계산" 서술은 검토안이지 확정이 아니다.
+3. **날짜보다 세밀한 가능 시간**: MVP는 `selectedDates`만 받지만, 사용자별 시간 단위 가능 여부가 필요하면 `availableSlots[{startAt,endAt}]` 계약을 추가해야 한다.
+4. **Meeting Memory 생성 주체와 갱신 시점**: AI 입력을 최소한의 `summary`로 정했지만 언제 요약하고 갱신할지는 미정이다.
+5. **Vocabulary 캐시 갱신**: TTL, Back 변경 알림 또는 수동 refresh 중 어떤 방식을 쓸지.
+6. **후보 생성 timeout과 재시도 횟수**: Back worker와 AI 서버의 제한 시간을 함께 정해야 한다.
+7. **사용자 결정 필요 결과의 Back 상태 매핑**: AI의 `NO_COMMON_SLOT`, `CONFLICT`, `NO_CANDIDATE`를 Back의 run·meeting 상태와 Front 화면에 어떻게 연결할지 Back 계약에서 정해야 한다.
+8. **자연어 입력 상한**: `messages`, `meetingMemory`의 최대 개수와 글자 수는 모델 비용·timeout 기준을 정한 뒤 확정해야 한다.
+9. **가능 날짜 데이터 원천**: `selectedDates`를 어느 Back 저장소 또는 Calendar 결과에서 조립할지와 시간 단위 `availableSlots` 확장 여부는 아직 미정이다.
+10. **재생성 시 `excludedExternalPlaceIds` 누적 저장소**: Back이 "지금까지 모든 generation에서 보여준 `externalPlaceId`"를 어디에 쌓아둘지는 AI 계약과 무관한 Back 내부 설계다 — AI는 상태를 저장하지 않으므로 Back이 매 `/candidates` 호출마다 완성된 목록을 보내주기만 하면 된다. `db_schema.md`의 "아직 구현되지 않은 테이블" 목록에 있는 `meeting_suggestions`가 이 역할을 할 것으로 보이지만 스키마가 아직 공유되지 않았다. 같은 목록의 `revision_requests`는 `/revise` 제거로 더 이상 필요 없을 가능성이 높다 — 확인 필요.
+
+---
+
+## 9. 명세에서 의도적으로 제외한 것
+
+- Front가 호출하는 `/api/**` 전체 명세
+- 회원가입·로그인·그룹·초대·일정 CRUD API
+- 참여자 날짜 제출 API
+- Back의 agent run polling API
+- Back의 제안 저장·조회·확정 API
+- Back의 DB 테이블 상세 설계와 migration
+- Google Calendar 연결·등록 API
+- 실제 장소 예약 API
+
+이 기능들은 AI API의 호출 전후에 필요하지만 Back의 구현 분야이므로 이 문서에서는 계약 대상으로 확장하지 않는다.

@@ -1,5 +1,10 @@
 # 다모여 AI API 설계
 
+> ⚠️ **초기 초안. 현재 계약의 기준이 아니다.**
+> 현재 Back↔AI 계약의 기준은 [`api-design2-backend.md`](api-design2-backend.md)다.
+> 이 문서는 그 이전 단계의 설계로, `/context` 2단계 분리, `/revise` 제거, `extractedPreferences` 등
+> 이후 확정된 변경이 반영돼 있지 않다. 내용이 다르면 `api-design2-backend.md`가 맞다.
+
 > 기준 문서: [ai-part-proposal.md](ai-part-proposal.md) (AI 파트 기획서, 최종 계약 포함)
 > 이 문서는 기획서를 근거로 실제 구현(`app/schemas/`, `app/api/routes/`)과 1:1로 맞춰 정리한 것이다.
 > 기획서 자체가 아직 열어둔 사항(12장 오픈 이슈)은 이 문서에서도 미정으로 남겨둔다.

@@ -1,3 +1,6 @@
+> ⚠️ **기획 단계 문서. 현재 계약의 기준이 아니다.**
+> 실제 Back↔AI 계약은 [`api-design2-backend.md`](api-design2-backend.md)를 본다.
+
 ## Preference Agent ↔ Backend API 규약
 
 ### 1. 목적
