@@ -1,7 +1,11 @@
 import pytest
+from langsmith.run_helpers import is_traceable_function
 
 from app.graph.fairness import (
+    CandidateFairnessScore,
     PreferenceRelation,
+    _trace_inputs,
+    _trace_output,
     calculate_candidate_fairness,
     calculate_group_fairness,
 )
@@ -105,3 +109,64 @@ def test_direct_allergy_conflict_is_vetoed():
 def test_group_fairness_rejects_out_of_range_value():
     with pytest.raises(ValueError):
         calculate_group_fairness([1.1])
+
+
+def test_candidate_fairness_is_exposed_as_langsmith_trace():
+    assert is_traceable_function(calculate_candidate_fairness)
+
+
+def test_fairness_trace_contains_formula_inputs_and_outputs():
+    participants = [
+        ParticipantInput(
+            user_id=3,
+            preferences=[
+                _preference("BEEF", Sentiment.POSITIVE, Strength.MODERATE),
+            ],
+        )
+    ]
+    relations = {(3, "BEEF"): PreferenceRelation.DIRECT}
+
+    trace_input = _trace_inputs(
+        {
+            "participants": participants,
+            "relations": relations,
+            "candidate_id": "1660282421",
+        }
+    )
+    trace_output = _trace_output(
+        CandidateFairnessScore(
+            participant_satisfaction={3: 1.0},
+            group_satisfaction=1.0,
+            minimum_satisfaction=1.0,
+            score=100.0,
+            vetoed=False,
+            matched_preference_codes=("BEEF",),
+        )
+    )
+
+    assert trace_input == {
+        "kakaoPlaceId": "1660282421",
+        "participants": [
+            {
+                "userId": 3,
+                "preferences": [
+                    {
+                        "vocabularyCode": "BEEF",
+                        "sentiment": "POSITIVE",
+                        "strength": "MODERATE",
+                    }
+                ],
+            }
+        ],
+        "preferenceRelations": [
+            {"userId": 3, "vocabularyCode": "BEEF", "relation": "DIRECT"}
+        ],
+    }
+    assert trace_output == {
+        "participantSatisfaction": [{"userId": 3, "value": 1.0}],
+        "S": 1.0,
+        "F": 1.0,
+        "score": 100.0,
+        "vetoed": False,
+        "matchedPreferenceCodes": ["BEEF"],
+    }

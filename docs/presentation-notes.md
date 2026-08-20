@@ -495,11 +495,11 @@ Extractor는 두 값을 서로 다른 계층 코드로 보존하고, 후보 단�
 
 ## 2. 참여자별 만족도와 공정성 점수
 
-> **구현 완료.** Back 요청·응답 계약은 바꾸지 않고, AI 내부에서 참여자별 선호 경계를 보존해 개인 만족도와 공정성 점수를 계산한다. LLM은 의미 관계만 판정하고 최종 점수와 순위는 Python 코드가 결정한다.
+> **구현 완료.** Back 요청·응답 계약은 바꾸지 않고, AI 내부에서 참여자별 선호 경계를 보존해 개인 만족도와 공정성 점수를 계산한다. LLM은 의미 관계만 판정하고, Python 코드가 모임 목적 hard gate와 공정성 사전랭킹을 수행해 영업 검증 우선순위를 결정한다.
 
 ### 발표에서 먼저 말할 한 문장
 
-> 참여자별 만족도를 따로 계산한 뒤 평균 만족도 70%와 최저 만족도 30%를 결합하며, 직접 확인된 알레르기 충돌만 점수 경쟁에서 제외한다.
+> 모임 목적과 무관한 후보는 먼저 hard gate로 제외하고, 남은 후보에서 참여자별 평균 만족도 70%와 최저 만족도 30%를 결합해 영업 검증 순서를 정한다.
 
 여기서 “수학적으로 공정함을 증명했다”는 표현은 정확하지 않다. 정확한 표현은 다음과 같다.
 
@@ -593,40 +593,53 @@ participants[]
 현재
 participants[]
 → 참여자별 선호 구조 보존
-→ 후보별 의미 관계 판정
+→ Kakao 후보 최대 15개의 컨텍스트·선호 의미 관계 판정
+→ contextRelation=NONE hard gate
 → 개인별 만족도 행렬 계산
-→ 공정성 점수로 정렬
+→ 공정성 점수로 사전랭킹
+→ 상위 6개부터 영업 검증, usable 부족 시 다음 3개씩 반복
 → 기존 응답 형식으로 반환
 ```
 
-응답에도 `fairnessScore`나 `participantScores` 같은 새 필드를 추가하지 않는다. 계산 결과는 후보 선택과 기존 `suggestions[].rank`를 결정하는 AI 내부 근거로만 사용한다. `reasons`와 일반 태그는 같은 LLM 호출이 후보별로 생성하고, `summary`는 앞 단계인 Activity Decider가 만든다. 따라서 Back과 Front는 수정하지 않아도 된다.
+응답에도 `fairnessScore`, `participantScores`, `contextRelation` 같은 새 필드를 추가하지 않는다. 계산 결과는 웹 검증 우선순위와 usable 후보의 기존 `suggestions[].rank`를 결정하는 AI 내부 근거로만 사용한다. `reasons`와 일반 태그는 사전랭킹 LLM 호출이 후보별로 생성하고, `summary`는 앞 단계인 Activity Decider가 만든다. 따라서 Back과 Front는 수정하지 않아도 된다.
 
-발표에서 숫자 계산을 보여줄 때는 API 응답이 아니라 고정된 테스트 fixture나 LangSmith 내부 trace를 사용한다.
+발표에서 숫자 계산을 보여줄 때는 API 응답이 아니라 고정된 테스트 fixture나 LangSmith의 후보별 `fairness_score` trace를 사용한다. 이 trace에는 개인 만족도 배열, 평균 `S`, 최저 `F`, 최종 점수와 veto 여부가 남는다.
 
-### 2.4 후보와 선호의 의미 관계를 제한된 값으로 바꾼다
+### 2.4 모임 목적 gate와 선호 관계를 분리한다
 
-Kakao 후보에는 장소명·카테고리·선택된 활동이 있고, 참여자 선호에는 Vocabulary 코드가 있다. 두 값은 문자열이 직접 같지 않으므로 먼저 후보와 선호가 얼마나 관련 있는지 판정해야 한다.
+Kakao 후보에는 장소명·카테고리와 이 후보를 만든 SearchPlan이 있고, 요청에는 명시적인 모임 목적과 참여자별 Vocabulary 선호가 있다. 여기서 **모임 목적 적합성**과 **개인 선호 관련성**은 역할이 다르므로 한 점수에 섞지 않는다.
 
-LLM이 만족도 숫자를 직접 만들게 하지 않고 다음 세 값 중 하나만 고르게 한다.
+먼저 후보가 모임 목적과 얼마나 관련 있는지 `contextRelation`을 판정한다.
 
-| 의미 관계 | 수치 `m(i,p,c)` | 예시 |
+| `contextRelation` | 의미 | 처리 |
+| --- | --- | --- |
+| `DIRECT` | 명시적인 목적·활동·조건에 직접 부합 | 공정성 계산 대상으로 유지 |
+| `PARTIAL` | 함께 고려할 수 있지만 직접 대응은 아님 | 공정성 계산 대상으로 유지 |
+| `NONE` | 모임 목적과 관련 있다는 근거가 없음 | **영업 검증 전에 hard gate로 제외** |
+
+`NONE`을 `0.0`으로 바꿔 공정성 공식에 더하는 방식이 아니다. 예를 들어 참여자들이 카페를 좋아하더라도 모임의 명시적 목적이 “저녁 회식”이고 후보가 식사와 무관한 카페라면, 개인 선호 점수로 목적 위반을 상쇄하지 않는다. 공정성은 목적을 만족한 후보끼리 비교하는 두 번째 기준이다.
+
+그다음 각 후보와 참여자 선호가 얼마나 관련 있는지 `preferenceRelation`을 판정한다. LLM이 만족도 숫자를 직접 만들게 하지 않고 다음 세 값 중 하나만 고르게 한다.
+
+| `preferenceRelation` | 수치 `m(i,p,c)` | 예시 |
 | --- | ---: | --- |
 | `DIRECT` | `1.0` | 마라탕 후보와 `SPICY_FOOD` |
 | `PARTIAL` | `0.5` | 일반 중식당과 `SPICY_FOOD` |
 | `NONE` | `0.0` | 카페 후보와 `SPICY_FOOD` |
 
-LLM은 후보 ID와 참여자별 선호 코드를 포함한 구조화 결과만 반환한다. AI 서버는 다음을 다시 검증한다.
+최대 15개 후보를 구조화 출력 한 번에 넣지 않고 5개씩 최대 3 batch로 나눠 병렬 평가한다. batch별 결과를 merge한 뒤에도 전체 후보가 빠짐없이 한 번씩 평가됐는지 검증한다. LLM은 후보 ID와 참여자별 선호 코드를 포함한 구조화 결과만 반환하며, AI 서버는 다음을 다시 검증한다.
 
 - 반환된 후보 ID가 실제 Kakao 후보에 있는지
 - `userId`가 요청의 참여자인지
 - 선호 코드가 해당 참여자의 실제 선호 목록에 있는지
-- 관계 값이 `DIRECT / PARTIAL / NONE` 중 하나인지
+- 두 관계 값이 각각 `DIRECT / PARTIAL / NONE` 중 하나인지
 
 후보·참여자·선호 중 하나라도 입력에 없거나 중복됐거나 누락되면 서버는 `502 MODEL_RESPONSE_INVALID`로 처리한다. 불완전한 관계 행렬을 조용히 점수 계산에 섞지 않는다. LLM은 의미 관계만 판단하고, enum을 숫자로 변환하는 작업부터 점수 집계와 정렬까지는 서버 코드가 수행한다.
 
 이 역할 분리의 목적은 다음과 같다.
 
 - 장소명·카테고리와 선호의 의미 연결은 LLM이 처리하기 적합하다.
+- 모임 목적과 무관한 `NONE` 후보의 제외는 서버가 hard gate로 강제한다.
 - 강도 가중치, 평균, 최솟값, 정렬은 코드로 계산해야 재현 가능하다.
 - LLM이 직접 만든 임의의 “공정성 점수”나 후보 순서를 신뢰하지 않아도 된다.
 
@@ -726,9 +739,10 @@ Score(c) = 100 × [0.7 × S(c) + 0.3 × F(c)]
 
 1. 최저 만족도 `F(c)`가 높은 후보
 2. 평균 만족도 `S(c)`가 높은 후보
-3. 그래도 같으면 원래 Kakao 후보 순서
+3. `contextRelation`이 `DIRECT`인 후보
+4. 그래도 같으면 원래 Kakao 후보 순서
 
-마지막 기준까지 고정해야 같은 입력에 대한 후보 순서가 흔들리지 않는다.
+`contextRelation`은 공정성 점수에 가중치로 들어가지 않는다. `NONE`은 계산 전에 제외하고, `DIRECT/PARTIAL`은 공정성 값이 모두 같을 때만 tie-break로 사용한다. 마지막 Kakao 순서까지 고정해야 같은 입력에 대한 후보 순서가 흔들리지 않는다.
 
 ### 2.8 단순 평균과 결과가 달라지는 예시
 
@@ -762,30 +776,38 @@ Score(c) = 100 × [0.7 × S(c) + 0.3 × F(c)]
 ### 2.9 전체 처리 흐름
 
 ```mermaid
-flowchart LR
-    A["기존 participants[] 요청"] --> B["참여자별 선호 구조 보존"]
-    B --> C["후보-선호 의미 관계 판정<br/>DIRECT / PARTIAL / NONE"]
-    C --> D{"_ALLERGY 코드와<br/>DIRECT 충돌?"}
-    D -->|예| E["후보 강제 제외"]
-    D -->|아니오| F["개인별 만족도 u(i,c) 계산"]
-    F --> G["평균 S(c)·최저 F(c) 계산"]
-    G --> H["0.7 × 평균 + 0.3 × 최저"]
-    H --> I["점수순 정렬"]
-    I --> J["기존 suggestions 응답"]
+flowchart TD
+    A["SearchPlan 1~4개"] --> B["Kakao 후보 최대 15개"]
+    B --> C["모든 후보의 contextRelation·<br/>참여자별 preferenceRelation 판정"]
+    C --> D{"contextRelation = NONE?"}
+    D -->|예| E["목적 hard gate로 제외"]
+    D -->|아니오| F{"_ALLERGY 코드와<br/>DIRECT 충돌?"}
+    F -->|예| G["안전 veto"]
+    F -->|아니오| H["개인 u(i,c)·평균 S(c)·최저 F(c) 계산"]
+    H --> I["0.7 × 평균 + 0.3 × 최저로 사전랭킹"]
+    I --> J["상위 6개 영업 검증"]
+    J --> K{"PASS/UNKNOWN usable이<br/>3개 이상?"}
+    K -->|아니오| L["남은 후보 중 다음 3개 검증"]
+    K -->|예| M["기존 Suggestion DTO 최대 3개"]
+    L --> K
+    L -->|후보 소진·deadline| M
 ```
 
 역할 경계는 다음과 같다.
 
 | 단계 | 담당 |
 | --- | --- |
-| 후보와 선호의 의미 관계 판정 | LLM의 제한된 구조화 출력 |
+| 후보와 선호의 의미 관계 판정 | 후보 5개씩 최대 3개 병렬 LLM batch의 제한된 구조화 출력 |
+| `contextRelation=NONE` hard gate | AI 서버 코드 |
 | 후보 ID·사용자 ID·Vocabulary 코드 검증 | AI 서버 코드 |
 | 직접 확인된 알레르기 충돌 veto | AI 서버 코드 |
 | 개인 효용·평균·최솟값·최종 점수 | AI 서버 코드 |
 | 후보별 추천 설명 문장 | LLM |
+| 상위 6개·fallback 3개씩 반복하는 영업 검증 제어 | AI 서버 코드 + Serper/Gemini |
+| 최대 3개 기존 DTO 조립 | 비-LLM Suggestion Builder |
 | 응답 저장·Front 전달 | 기존 Back 계약 |
 
-LLM은 모든 후보의 의미 관계와 후보별 집단 수준 추천 사유를 함께 반환한다. 서버는 LLM 배열 순서를 무시하고 공정성 점수로 다시 정렬한 뒤 해당 후보의 사유를 사용한다.
+LLM은 최대 15개 후보를 5개씩 병렬 평가해 의미 관계와 후보별 집단 수준 추천 사유를 반환한다. 서버는 batch 결과를 merge·검증하고 LLM 배열 순서를 무시한 채 gate와 공정성 수식으로 사전랭킹한다. 이때 아직 최종 3개를 확정하지 않는다. 상위 후보부터 영업 검증한 뒤 `PASS/UNKNOWN`인 usable 후보만 사전랭킹 순서대로 최대 3개 조립한다.
 
 ### 2.10 응답에는 점수를 추가하지 않는다
 
@@ -815,15 +837,15 @@ LLM은 모든 후보의 의미 관계와 후보별 집단 수준 추천 사유�
 
 ```python
 {
-    "candidateId": "12345678",
-    "participantUtilities": {
-        "participant_1": 0.8,
-        "participant_2": 0.7,
-        "participant_3": 0.6
+    "kakaoPlaceId": "12345678",
+    "participantSatisfaction": {
+        1: 0.8,
+        2: 0.7,
+        3: 0.6
     },
-    "averageUtility": 0.7,
-    "minimumUtility": 0.6,
-    "fairnessScore": 67.0,
+    "S": 0.7,
+    "F": 0.6,
+    "score": 67.0,
     "vetoed": False
 }
 ```
@@ -844,12 +866,14 @@ LLM은 모든 후보의 의미 관계와 후보별 집단 수준 추천 사유�
 
 1. `/candidates` 라우트가 `participants[]`를 평탄화하지 않고 그래프에 그대로 전달한다.
 2. Candidates state가 `userId`별 선호 경계를 유지한다.
-3. Activity Decider도 참여자별 구조를 받지만 출력 문장은 집단 수준으로만 작성한다.
-4. Candidate Ranker의 LLM은 순위를 만들지 않고 모든 후보·참여자·선호의 `DIRECT / PARTIAL / NONE` 관계를 반환한다.
-5. `app/graph/fairness.py`가 `q`, `u`, `S`, `F`, 최종 점수를 순수 Python으로 계산한다.
-6. 일반 `STRONG + NEGATIVE`는 만족도에 반영하고, `_ALLERGY + DIRECT`만 veto한다.
-7. 후보는 `Score → F → S → Kakao 원래 순서`로 정렬한다.
-8. 최종 API에는 점수 필드를 추가하지 않고 기존 `suggestions` 응답을 그대로 사용한다.
+3. Activity Decider가 최종 활동이 아니라 `SearchPlan` 1~4개를 만들고 목적→선호→메모리 순으로 정렬한다. Place Search는 query별·계획별 round-robin으로 최대 15개를 수집한다.
+4. Candidate Pre-Ranker는 후보를 5개씩 최대 3 batch로 병렬 평가하며, LLM은 순위를 만들지 않고 모든 후보의 `contextRelation`과 모든 참여자·선호의 `preferenceRelation`을 반환한다.
+5. 서버가 `contextRelation=NONE`을 공정성 수식 전에 hard gate로 제외한다.
+6. `app/graph/fairness.py`가 `q`, `u`, `S`, `F`, 최종 점수를 순수 Python으로 계산한다.
+7. 일반 `STRONG + NEGATIVE`는 만족도에 반영하고, `_ALLERGY + DIRECT`만 veto한다.
+8. 생존 후보는 `Score → F → S → contextRelation → Kakao 원래 순서`로 사전랭킹한다.
+9. Verifier가 상위 6개를 먼저 검증하고 usable 후보가 3개 미만이면 3개씩 추가하며, usable 3개 확보·후보 소진·공통 deadline 중 하나에서 멈춘다.
+10. 비-LLM Suggestion Builder가 `PASS/UNKNOWN`을 사전랭킹 순서대로 최대 3개 조립하며 기존 응답 계약을 유지한다.
 
 ### 2.13 구현을 고정하는 테스트
 
@@ -859,9 +883,13 @@ LLM은 모든 후보의 의미 관계와 후보별 집단 수준 추천 사유�
 - `STRONG + NEGATIVE + DIRECT`가 만족도 `0.0`이지만 veto는 아닌지
 - `_ALLERGY + DIRECT` 후보가 veto되는지
 - 참여자 구분이 라우트에서 그래프까지 보존되는지
+- 최대 15개 후보가 5개씩 병렬 batch로 평가되고 merge 뒤에도 완전성이 유지되는지
+- `contextRelation=NONE`이 높은 선호 점수와 무관하게 영업 검증 전에 제외되는지
 - LLM 배열 순서와 관계없이 서버 점수로 재정렬되는지
 - 입력에 없는 장소 ID나 누락된 선호 관계가 `MODEL_RESPONSE_INVALID`인지
-- `PASS / FAIL / UNKNOWN` 영업 검증과 기존 태그·응답 필드가 유지되는지
+- 상위 6개에서 usable 3개를 확보하면 fallback을 호출하지 않는지
+- usable이 부족할 때만 다음 3개씩 반복 검증하고 모든 batch가 공통 20초 예산을 쓰는지
+- `PASS / FAIL / UNKNOWN`과 기존 태그·응답 필드가 유지되는지
 - 최종 OpenAPI 스키마가 구현 전과 동일한지
 
 ### 2.14 한계와 발표에서 구분할 점
@@ -884,11 +912,13 @@ Kakao 장소명과 카테고리만으로 실제 재료나 교차 오염까지 �
 
 #### 5. 실제 모델의 의미 판정 품질은 별도로 평가해야 한다
 
-점수 계산과 정렬은 구현 및 단위 테스트로 고정했지만, 실제 장소가 선호와 `DIRECT / PARTIAL / NONE` 중 어디에 해당하는지는 Gemini가 판정한다. 발표에서는 수식의 재현성과 의미 판정 정확도를 구분하고, 후자는 실제 발화·장소 평가셋으로 추가 검증할 과제로 설명한다.
+점수 계산과 정렬은 구현 및 단위 테스트로 고정했지만, 실제 장소가 모임 목적이나 선호와 `DIRECT / PARTIAL / NONE` 중 어디에 해당하는지는 Gemini가 판정한다. 발표에서는 수식의 재현성과 의미 판정 정확도를 구분하고, 후자는 실제 발화·장소 평가셋으로 추가 검증할 과제로 설명한다.
 
-#### 6. 참여자와 선호 수가 커지면 출력 행렬도 커진다
+특히 `contextRelation=NONE`은 hard gate이므로 오판하면 좋은 후보가 영업 검증 전에 사라지는 false negative가 생길 수 있다. gate 정책이 결정론적이라는 것과 gate에 들어가는 의미 판정이 완벽하다는 주장은 구분해야 한다.
 
-현재 LLM은 `후보 수 × 전체 참여자 선호 수`만큼 관계를 빠짐없이 반환한다. 프로토타입 규모에서는 완전성 검증이 명확하다는 장점이 있지만, 큰 모임에서는 출력 토큰이 빠르게 늘 수 있다. 운영 규모가 커지면 요청 상한, 후보별 batching 또는 사전 후보 축소가 필요하다.
+#### 6. 후보·참여자와 선호 수가 커지면 출력 행렬도 커진다
+
+현재 LLM은 후보를 5개씩 나눠 병렬 호출하지만, 전체적으로는 최대 15개 후보 각각에 대해 `전체 참여자 선호 수`만큼 관계를 빠짐없이 반환한다. batching은 호출 하나의 구조화 출력 크기와 지연 누적을 줄이지만 총 출력 토큰의 증가 자체를 없애지는 않는다. 큰 모임에서는 참여자·선호 요청 상한이나 관계 평가 방식의 추가 축소가 필요하다.
 
 #### 7. 모델에 전달하는 참여자 식별자는 요청 내부 별칭으로 바꿀 수 있다
 
@@ -909,7 +939,8 @@ C: 매운 음식 강한 비선호
 후보 2: [0.6, 0.6, 0.6] → 60.0점
 
 3. 최종 결과
-후보 2가 1순위
+후보 2가 사전랭킹 1순위
+→ 영업 검증이 PASS 또는 UNKNOWN이면 최종 후보 1순위
 ```
 
 알레르기는 점수표에 넣지 않고 다음처럼 별도로 보여준다.
@@ -921,11 +952,11 @@ C: 매운 음식 강한 비선호
 → 순위 경쟁에서 제외
 ```
 
-이 계산은 고정 단위 테스트로 검증돼 있다. 발표에서는 테스트 실행 결과나 내부 디버그 trace와 함께 보여주되, `[0.6, 0.6, 0.6]`은 집계식 설명용 입력값임을 밝힌다.
+이 계산은 고정 단위 테스트로 검증돼 있다. 발표에서는 테스트 실행 결과나 LangSmith의 `fairness_score` trace와 함께 보여주되, `[0.6, 0.6, 0.6]`은 집계식 설명용 입력값임을 밝힌다.
 
 ### 2.16 발표용 1분 설명 초안
 
-> 기존 요청에는 이미 참여자별 사용자 ID와 개인 선호가 구분돼 들어옵니다. 과거에는 AI 내부에서 이를 한 목록으로 합쳤지만, 지금은 요청과 응답 스키마를 바꾸지 않고 그 경계를 랭킹 단계까지 보존합니다. LLM은 각 후보와 선호의 관계를 `DIRECT / PARTIAL / NONE`으로만 판정하고, Python 코드가 참여자별 만족도를 계산합니다. 일반적인 강한 비선호는 만족도를 최대 0까지 낮춰 계산에 남기고, 직접 확인된 알레르기 충돌만 점수 경쟁에서 제외합니다. 나머지 후보는 평균 만족도 70%와 가장 낮은 만족도 30%를 결합합니다. 그래서 두 사람은 완전히 만족하지만 한 사람은 전혀 만족하지 못하는 후보보다, 세 사람 모두가 적당히 만족하는 후보가 먼저 나올 수 있습니다. 의미 판정은 LLM이 담당하지만 개인별 집계, 평균, 최솟값과 최종 정렬은 서버의 고정 수식이 수행하며 이 동작은 단위 테스트로 검증했습니다.
+> 기존 요청에는 이미 참여자별 사용자 ID와 개인 선호가 구분돼 들어옵니다. 지금은 요청·응답 스키마를 바꾸지 않고 그 경계를 후보 평가까지 보존합니다. 먼저 최대 15개 Kakao 후보에 대해 LLM이 모임 목적 적합도와 각 선호의 관계를 `DIRECT / PARTIAL / NONE`으로 판정합니다. 목적과 무관한 `contextRelation=NONE`은 공정성 점수로 타협하지 않고 hard gate로 제외합니다. 남은 후보에서는 Python 코드가 참여자별 만족도를 계산하고 평균 70%와 가장 낮은 만족도 30%를 결합합니다. 일반적인 강한 비선호는 만족도를 최대 0까지 낮춰 계산에 남기고, 직접 확인된 알레르기 충돌만 veto합니다. 이 점수는 최종 API에 노출하지 않고 영업 검증 순서를 정하는 사전랭킹으로 사용합니다. 상위 6개부터 검증하고 usable 후보가 부족할 때만 다음 3개씩 확장해, 기존 응답 DTO로 최대 3개를 조립합니다. 의미 관계는 LLM이 판단하지만 gate, 개인별 집계, 평균, 최솟값과 정렬은 서버의 고정 코드가 수행합니다.
 
 ### 2.17 예상 질문과 답변
 
@@ -949,6 +980,10 @@ C: 매운 음식 강한 비선호
 
 아니다. 알레르기와 직접 충돌하는 후보는 점수 경쟁에서 제외한다. 안전 조건은 다른 사람들의 높은 만족도로 상쇄할 수 있는 선호가 아니라고 판단했다.
 
+**Q. 모임 목적 적합도도 공정성 점수에 가중치로 더하나요?**
+
+아니다. `contextRelation=NONE`은 수식에 0점으로 넣는 것이 아니라 후보 자격을 제거하는 hard gate다. `DIRECT/PARTIAL` 후보 안에서만 참여자별 공정성을 비교하고, 둘의 공정성 값이 모두 같을 때만 `DIRECT`를 tie-break로 우선한다.
+
 **Q. Back 수정 없이 정말 가능한가요?**
 
 가능하다. 현재 요청에 `participants[].userId`와 각 참여자의 `preferences[]`가 이미 들어온다. AI 내부에서 이 구조를 평탄화하지 않고 보존하며, 점수는 응답에 추가하지 않고 기존 후보의 선택과 `rank`에만 반영한다. 기존 응답 필드는 그대로다.
@@ -964,9 +999,13 @@ C: 매운 음식 강한 비선호
 - 참여자별 요청 스키마: `app/schemas/candidates.py`
 - 참여자 구조를 보존하는 라우트: `app/api/routes/meetings.py`
 - 참여자별 선호를 보관하는 그래프 상태: `app/graph/state.py`
+- SearchPlan 1~4개 생성: `app/graph/nodes/n_candidate_activity_decider.py`, `app/prompts/n_candidate_activity_decider.py`
+- 계획별 후보를 균형 있게 합쳐 최대 15개로 제한: `app/graph/nodes/l_candidate_place_search.py`
 - `q`, `u`, `S`, `F`, 최종 점수를 계산하는 순수 Python 모듈: `app/graph/fairness.py`
-- 모든 후보의 의미 관계를 검증하고 서버 점수로 정렬하는 Ranker: `app/graph/nodes/n_candidate_ranker.py`
+- context hard gate와 모든 후보의 공정성 사전랭킹: `app/graph/nodes/n_candidate_ranker.py`
 - LLM의 역할을 관계 판정과 후보 설명으로 제한한 프롬프트: `app/prompts/n_candidate_ranker.py`
+- 상위 6개와 fallback 3개씩 반복하는 영업 검증: `app/graph/nodes/n_candidate_place_verifier.py`
+- 기존 DTO 최대 3개 조립: `app/graph/nodes/l_candidate_suggestion_builder.py`
 - 수식·veto 단위 테스트: `tests/graph/test_fairness.py`
 - 랭킹·완전성 검증 테스트: `tests/graph/test_ranker_explainer.py`
 - 참여자 경계 보존 API 테스트: `tests/api/test_candidates_route.py`
@@ -979,11 +1018,11 @@ C: 매운 음식 강한 비선호
 
 ### 발표에서 먼저 말할 한 문장
 
-> Kakao로 찾은 장소를 Serper 웹 검색으로 다시 확인하고, Gemini가 확정된 모임 시간과 검색 근거를 비교해 `PASS / FAIL / UNKNOWN`으로 판정하며, 최종 이용 가능 여부는 서버가 이 상태에서 결정론적으로 파생시킨다.
+> Kakao 후보 최대 15개를 먼저 컨텍스트·공정성으로 사전랭킹하고, 상위 6개부터 Serper와 Gemini로 영업을 확인해 usable 후보 3개를 확보할 때까지 다음 3개씩 확장한다.
 
 정확한 기술 표현은 다음과 같다.
 
-> Gemini가 직접 웹을 탐색하는 것이 아니라, Serper가 수집한 검색 결과를 Gemini가 구조화 분류하는 **검색 증강 3-state 사실 검증 파이프라인**이다.
+> Gemini가 직접 웹을 탐색하는 것이 아니라, Serper가 수집한 검색 결과를 Gemini가 구조화 분류하고 서버가 `PASS / FAIL / UNKNOWN`을 후보 정책으로 바꾸는 **우선순위 기반 검색 증강 3-state 사실 검증 파이프라인**이다.
 
 ### 3.1 해결하려던 문제
 
@@ -1014,7 +1053,7 @@ Kakao 단계에서 현재 확보하는 정보는 다음과 같다.
 - 검색 결과끼리 영업시간 정보가 다른 경우
 - 영업시간은 보이지만 특정 날짜에 적용되는지 불명확한 경우
 
-따라서 장소 검색 뒤에 별도의 외부 사실 검증 단계가 필요했다.
+따라서 장소 검색 뒤에 별도의 외부 사실 검증 단계가 필요했다. 다만 Kakao 후보 최대 15개를 전부 `Serper 1회 + Gemini 1회`로 확인하면 비용과 지연이 커진다. 그래서 컨텍스트 hard gate와 공정성 사전랭킹을 먼저 적용하고, 최종 3개를 확보하는 데 필요한 상위 후보만 단계적으로 검증한다.
 
 ### 3.2 검토한 방식과 현재 선택
 
@@ -1024,9 +1063,11 @@ Kakao 단계에서 현재 확보하는 정보는 다음과 같다.
 | Gemini의 사전 지식만 사용 | 추가 검색 없이 자연어로 판단 가능 | 최신 영업시간을 기억한다고 보장할 수 없고 출처 없는 환각 위험이 큼 |
 | Gemini `google_search` grounding으로 검색·판정 | 모델이 직접 검색 근거를 활용해 흐름이 단순함 | 일반 생성 호출과 별도의 빡빡한 할당량 때문에 실제 실행에서 `429`가 자주 발생 |
 | 검색 스니펫을 규칙으로만 파싱 | 결정론적이며 판정 LLM 호출이 없음 | 요일·공휴일·브레이크타임·자정 넘김·자연어 표현이 다양해 규칙이 빠르게 복잡해짐 |
+| Kakao 후보 최대 15개를 모두 웹 검증 | 이후 선택 가능한 정보가 가장 많음 | 후보마다 Serper와 Gemini 호출이 필요해 비용·지연이 불필요하게 커짐 |
+| 공정성 상위 3개만 검증 | 외부 호출 수가 가장 적음 | 하나라도 `FAIL`이면 최종 후보 3개를 채울 수 없음 |
 | 확인 실패 후보를 모두 제거 | 닫힌 장소를 추천할 위험을 줄임 | 검색 장애나 정보 부족만으로 정상 후보까지 사라지는 false negative가 커짐 |
 | 확인 실패 후보를 영업 중으로 간주 | 후보 수를 유지하기 쉬움 | 확인하지 않은 사실을 사용자에게 확정적으로 주장하게 됨 |
-| **Serper 검색 + Gemini 3-state 판정 + 서버 후처리** | 검색과 판단 책임을 분리하고 불확실성을 보존 | 검색 스니펫 품질과 Gemini의 의미 판단에 여전히 의존 |
+| **공정성 사전랭킹 + initial 6/fallback 3개씩 + 3-state 판정** | 상위 후보에 외부 호출을 집중하면서 불확실성을 보존 | usable 후보가 계속 부족하면 최대 15개까지 검증해 호출 절약 폭이 줄어듦 |
 
 초기에는 Gemini의 검색 grounding 도구를 사용했다. 하지만 grounding 검색 할당량이 일반 Gemini 생성 호출과 별도로 제한돼 실제 후보 여러 개를 동시에 검증할 때 `429`가 발생했다. 그래서 검색을 Serper로 분리하고, Gemini는 전달받은 근거의 판정만 담당하게 했다.
 
@@ -1034,30 +1075,39 @@ Kakao 단계에서 현재 확보하는 정보는 다음과 같다.
 
 | 구성 요소 | 담당하는 일 | 담당하지 않는 일 |
 | --- | --- | --- |
-| Kakao Local API | 실제 장소 후보, 고유 ID, 주소, 좌표 확보 | 특정 모임 시간의 영업 여부 판정 |
+| SearchPlan·Kakao Local API | 검색 계획별 실제 장소 후보를 모아 최대 15개 풀 구성 | 최종 순위와 특정 모임 시간의 영업 여부 판정 |
+| Context/Fairness Pre-Ranker | 목적 `NONE` gate와 참여자별 공정성으로 웹 검증 우선순위 생성 | 영업 여부 판정, 최종 DTO 확정 |
 | Serper API | 웹 검색 결과의 제목·스니펫·URL 수집 | 결과의 의미 해석과 최종 판정 |
 | Gemini | 검색 근거와 모임 시간 비교, `PASS/FAIL/UNKNOWN` 구조화 판정 | 웹 직접 탐색, 장소 생성, 최종 태그 부착 |
-| AI 서버 코드 | 병렬 실행, timeout, 후보 보존·제외, 응답 필드·태그 파생 | 근거에 없는 영업시간 생성 |
+| Verifier 서버 코드 | initial 6 이후 fallback 3개씩 반복, 공통 timeout, 근거 정규화와 `UNKNOWN` 보존 | 근거에 없는 영업시간 생성 |
+| Suggestion Builder | usable 후보를 사전랭킹 순서대로 최대 3개 기존 DTO로 조립 | 새로운 점수·상태 필드를 Back에 추가 |
 
 이렇게 분리하면 검색 제공자를 바꾸더라도 판정과 Back 응답 계약을 유지할 수 있고, LLM이 장소 ID나 영업 확인 태그를 자유롭게 만들지 못하게 할 수 있다.
 
 ### 3.4 실제 검증 흐름
 
 ```mermaid
-flowchart LR
-    A["Kakao Local API<br/>장소 후보"] --> B["장소명 + 주소로<br/>Serper 검색"]
-    B --> C["상위 5개 결과<br/>제목·스니펫·URL"]
-    C --> D["Gemini 구조화 판정<br/>날짜·시작·종료 시각 비교"]
-    D -->|PASS| E["후보 유지<br/>영업 확인 태그 부여"]
-    D -->|FAIL| F["Ranker 입력 전 제외"]
-    D -->|UNKNOWN| G["후보 유지<br/>영업 여부 미확인"]
-    B -->|검색 오류| G
-    D -->|판정 오류·timeout| G
+flowchart TD
+    A["SearchPlan 1~4개"] --> B["Kakao 후보 최대 15개"]
+    B --> C["context NONE hard gate +<br/>참여자 공정성 사전랭킹"]
+    C --> D["1~6위 병렬 영업 검증"]
+    D --> E["장소명 + 주소로 Serper 검색"]
+    E --> F["상위 5개 제목·스니펫·URL"]
+    F --> G["Gemini 구조화 판정<br/>PASS / FAIL / UNKNOWN"]
+    G --> H{"usable(PASS/UNKNOWN)<br/>3개 이상?"}
+    H -->|아니오| I["남은 후보 중 다음 3개 병렬 검증"]
+    H -->|예| J["사전랭킹 순서로<br/>기존 DTO 최대 3개"]
+    I --> H
+    I -->|후보 소진·deadline| J
 ```
 
 #### 1단계: Kakao에서 실제 장소 후보를 찾는다
 
-Activity Decider가 정한 활동별 검색어와 모임 지역으로 Kakao Local API를 호출한다. 중복 장소와 이전 generation에서 이미 보여준 장소는 제거하고, 활동별 상위 후보를 남긴다. 여기서 얻은 `kakaoPlaceId`가 검색·검증·Ranker가 공유하는 장소 식별자다.
+Activity Decider가 내부 SearchPlan 1~4개와 계획별 검색어 1~3개를 만든다. 같은 축의 상반된 meetingTag는 서버가 거부하고, 계획은 `MEETING_PURPOSE → PARTICIPANT_PREFERENCE → MEETING_MEMORY` 순으로 정렬한다. 같은 장소가 여러 계획에서 검색될 때 명시적 목적에서 나온 provenance를 우선 보존하기 위해서다.
+
+모임 지역과 검색어를 결합해 Kakao Local API를 호출하고, 이전 generation에서 이미 보여준 장소를 제거한다. 한 계획 안에서는 query별 결과를 번갈아 섞어 첫 검색어가 후보를 독점하지 않게 하고, 다시 계획별 후보를 round-robin으로 합치면서 전역 중복을 제거한다. 계획별 최대 5개, 전체 최대 15개다.
+
+이 15개를 바로 웹 검색하지 않는다. Pre-Ranker는 후보를 5개씩 최대 3 batch로 나눠 Gemini에서 병렬 평가한 뒤 merge한다. 서버가 `contextRelation=NONE`과 알레르기 직접 충돌을 제외하고 참여자별 공정성 점수로 순서를 만든다. 웹 검증은 그 순서의 1~6위부터 시작한다. 여기서 얻은 `kakaoPlaceId`가 검색·사전랭킹·검증·응답 조립이 공유하는 식별자다.
 
 #### 2단계: 장소명과 주소로 Serper를 검색한다
 
@@ -1096,6 +1146,11 @@ Gemini에는 다음 정보만 전달한다.
 - 확정된 종료 시각
 - Serper 검색 결과의 제목·스니펫·URL
 
+Back이 확정 시각을 UTC(`Z`)로 보내는 경우, 서버는 Gemini에 전달하기 직전에
+`Asia/Seoul` 현지 시각으로 변환한다. 예를 들어 `09:00Z~11:00Z`는 한국 매장 영업시간과
+비교할 때 `18:00~20:00`이다. 이 변환은 표현 기준만 바꾸며 실제 시점이나 Back 응답
+스키마를 바꾸지 않는다.
+
 출력은 Pydantic 구조화 스키마로 제한한다.
 
 ```python
@@ -1108,19 +1163,23 @@ Gemini에는 다음 정보만 전달한다.
 
 Gemini는 새로운 장소를 추천하거나 순위를 매기지 않는다. 제공받은 검색 결과만 근거로 해당 장소가 정해진 시간 전체에 이용 가능한지 분류한다.
 
+구조화 출력 뒤에는 서버 정규화가 한 번 더 있다. `source`가 실제 Serper 검색 결과 URL 중 하나인지 allowlist로 대조하고, 모델이 목록 밖 URL을 만들면 버린다. `PASS/FAIL`인데 유효한 source가 없거나 `PASS`인데 `businessHours`가 없으면 확정 판정에 필요한 최소 근거가 부족하다고 보고 `UNKNOWN`으로 낮춘다.
+
 #### 4단계: 서버가 판정 결과를 후보 정책으로 바꾼다
 
-Gemini의 상태를 그대로 Front에 새 enum으로 노출하지 않는다. 서버가 기존 후보 응답 필드와 필터링 규칙으로 변환한다.
+Gemini의 상태를 그대로 Front에 새 enum으로 노출하지 않는다. 서버는 `PASS/UNKNOWN`을 usable로 세고 `FAIL`을 제외한다. initial batch 1~6위에서 usable 후보를 3개 이상 확보하면 검증을 종료한다. 3개 미만이면 같은 20초 deadline의 남은 시간으로 다음 순위 후보를 3개씩 반복 검증한다. usable 3개 확보, ranked 후보 최대 15개 소진, deadline 도달 중 하나에서 멈춘다.
+
+마지막 비-LLM Suggestion Builder가 검증된 usable 후보를 사전랭킹 순서대로 최대 3개 골라 기존 응답 필드와 태그로 변환한다.
 
 ### 3.5 Boolean이 아니라 세 상태로 관리하는 이유
 
 “문을 닫는다”와 “확인하지 못했다”는 전혀 다른 상태이므로 영업 검증을 단순한 `true/false`로 표현하지 않는다.
 
-| 상태 | 의미 | Ranker 입력 | 최종 응답 |
+| 상태 | 의미 | usable | 최종 응답 |
 | --- | --- | --- | --- |
-| `PASS` | 해당 날짜에 영업하고 모임 시간 전체가 영업시간 안에 있음 | 포함 | `businessHoursVerified=true`, `openAtMeetingTime=true`, 이용 가능 태그 |
-| `FAIL` | 휴무·폐업 또는 모임 시간대가 영업시간을 벗어남 | 제외 | 최종 후보에 포함하지 않음 |
-| `UNKNOWN` | 결과 없음, 정보 부족, 충돌, 검색·판정 오류, timeout | 포함 가능 | `businessHoursVerified=false`, `openAtMeetingTime=null`, 이용 가능 태그 없음 |
+| `PASS` | 해당 날짜에 영업하고 모임 시간 전체가 영업시간 안에 있음 | 예 | `businessHoursVerified=true`, `openAtMeetingTime=true`, 이용 가능 태그 |
+| `FAIL` | 휴무·폐업 또는 모임 시간대가 영업시간을 벗어남 | 아니오 | 최종 후보에 포함하지 않음 |
+| `UNKNOWN` | 결과 없음, 정보 부족, 충돌, 검색·판정 오류, timeout | 예 | `businessHoursVerified=false`, `openAtMeetingTime=null`, 이용 가능 태그 없음 |
 
 모임 시간이 18:00~20:00일 때 예시는 다음과 같다.
 
@@ -1132,7 +1191,7 @@ Gemini의 상태를 그대로 Front에 새 enum으로 노출하지 않는다. �
 | “오늘 영업 중”만 있고 종료 시각 없음 | `UNKNOWN` | 20시까지 이용 가능한지 알 수 없음 |
 | 출처별 영업시간이 서로 다름 | `UNKNOWN` | 어느 정보를 신뢰해야 할지 확정할 수 없음 |
 
-`UNKNOWN`은 실패를 완곡하게 표현한 값이 아니라 정보가 부족하다는 사실을 별도로 보존한 상태다.
+`UNKNOWN`은 실패를 완곡하게 표현한 값이 아니라 정보가 부족하다는 사실을 별도로 보존한 상태다. 여기서 usable이라는 말은 “영업 확인 완료”가 아니라 “추천 후보로 보존 가능”이라는 뜻이다. 그래서 `UNKNOWN`도 후보 수에는 포함하지만 `PASS` 표시를 붙이지 않는다.
 
 ### 3.6 병렬 실행과 timeout·오류 복구
 
@@ -1142,15 +1201,17 @@ Gemini의 상태를 그대로 Front에 새 enum으로 노출하지 않는다. �
 Serper 검색 1회 + Gemini 판정 1회
 ```
 
-이를 순차 실행하면 후보 수만큼 지연시간이 누적되므로 장소별 작업을 `asyncio` task로 만들어 병렬 실행한다. 전체 검증 제한 시간은 20초다.
+이를 최대 15개에 한꺼번에 실행하지 않고 사전랭킹 상위 후보에 집중한다. 1차로 1~6위를 `asyncio` task로 병렬 실행하고, usable 후보가 3개보다 적을 때만 남은 후보를 3개씩 병렬 실행한다. usable 3개를 확보하거나 후보를 모두 소진할 때까지 반복할 수 있지만, 모든 batch의 검증 제한 시간은 합쳐서 20초다. 각 fallback이 새 20초를 받는 구조가 아니다.
 
 ```text
-후보 A ─ Serper ─ Gemini ┐
-후보 B ─ Serper ─ Gemini ├─ 전체 20초
-후보 C ─ Serper ─ Gemini ┘
+initial batch:  1~6위 ─ Serper + Gemini 병렬 ┐
+                                                 ├─ 공통 20초 deadline
+fallback: 다음 3개씩 ─ usable<3일 때만 반복 ┘
 ```
 
-20초 안에 끝난 장소는 판정 결과를 사용한다. 끝나지 않은 task는 취소하지만 Kakao에서 얻은 장소 정보 자체는 삭제하지 않고 `UNKNOWN` 상태로 복원한다. 입력 후보 순서도 유지한다.
+20초 안에 끝난 장소는 판정 결과를 사용한다. 끝나지 않은 task는 취소하지만 Kakao에서 얻은 장소 정보 자체는 삭제하지 않고 `UNKNOWN` 상태로 복원한다. 최종 조립에서도 사전랭킹 순서를 유지한다.
+
+예를 들어 1~6위 결과가 `PASS, FAIL, FAIL, UNKNOWN, FAIL, FAIL`이면 usable은 2개이므로 7~9위를 추가 검증한다. 그 batch에서도 usable이 늘지 않으면 10~12위처럼 다음 3개로 계속 진행할 수 있다. 반대로 1~6위가 모두 `UNKNOWN`이면 영업 확인은 하나도 성공하지 않았지만 usable 후보는 6개이므로 fallback은 실행하지 않는다. 불확실한 후보 보존과 영업 확인 성공을 같은 뜻으로 취급하지 않는 것이 중요하다.
 
 오류 종류별 처리는 다음과 같다.
 
@@ -1160,7 +1221,7 @@ Serper 검색 1회 + Gemini 판정 1회
 | Serper API key 누락 | 해당 장소를 `UNKNOWN`으로 유지하고 서버 로그에 설정 오류 기록 |
 | 검색 결과 없음 | 근거 부족이므로 일반적으로 `UNKNOWN` 판정 |
 | Gemini 호출·구조화 출력 오류 | 해당 장소를 `UNKNOWN`으로 유지 |
-| 전체 20초 timeout | 미완료 장소를 `UNKNOWN`으로 복원하고 `verificationTimedOut=true` |
+| 공통 20초 deadline 도달 | 실행 중 후보를 `UNKNOWN`으로 복원하고 `verificationTimedOut=true`; 시작하지 않은 후순위 후보는 검증하지 않음 |
 | 로컬 테스트에서 검증 생략 플래그 사용 | 검색 없이 즉시 `UNKNOWN` |
 
 정책을 한 문장으로 표현하면 다음과 같다.
@@ -1169,25 +1230,26 @@ Serper 검색 1회 + Gemini 판정 1회
 
 외부 장애가 추천 전체를 무너뜨리지는 않지만, 확인되지 않은 후보에 `PASS` 표시를 붙이지도 않는다.
 
-### 3.7 Ranker와 서버 후처리 규칙
+### 3.7 사전랭킹과 Suggestion Builder의 역할
 
-Verifier가 만든 상태는 Ranker 앞에서 코드로 필터링한다.
+순서는 **Ranker 다음 Verifier**다. 공정성 Ranker가 최대 15개 후보의 검증 우선순위를 먼저 만들고, Verifier가 1~6위부터 시작해 필요할 때만 다음 3개씩 확인한다. 마지막 Suggestion Builder가 다음처럼 조립한다.
 
 ```python
-eligible = [
+usable = [
     place
     for place in verified_places
     if place["verification_status"] != "FAIL"
-]
+][:3]
 ```
 
 따라서 다음 규칙이 보장된다.
 
-- `FAIL`은 LLM Ranker가 선택할 기회 자체가 없다.
-- `PASS`와 `UNKNOWN`만 추천 순위 후보가 된다.
-- Ranker는 `verificationStatus`를 참고하지만 영업 가능 태그를 직접 만들 수 없다.
+- `FAIL`은 사전랭킹에는 존재했지만 최종 `suggestions`에서 제외된다.
+- `PASS`와 `UNKNOWN`만 usable이며 사전랭킹 순서를 그대로 유지한다.
+- 최종 최대 3개를 조립하는 Builder는 비-LLM이다.
+- Pre-Ranker는 아직 영업 검증 전이므로 `verificationStatus`를 보거나 영업 가능 사유를 만들지 않는다.
 
-`AVAILABLE_AT_MEETING_TIME`은 LLM이 선택할 수 있는 태그 목록에서 제외돼 있다. 최종 응답은 서버가 다음처럼 파생한다.
+`AVAILABLE_AT_MEETING_TIME`은 Pre-Ranker LLM이 선택할 수 있는 태그 목록에서 제외돼 있다. 최종 응답은 Builder가 다음처럼 파생한다.
 
 ```text
 verification_status == PASS
@@ -1203,7 +1265,7 @@ verification_status == UNKNOWN
 
 `businessHours` 문자열이 채워졌더라도 `UNKNOWN`이면 확인 완료로 간주하지 않는다. 참고할 만한 영업시간 문구를 찾았지만 특정 모임 시간에 실제로 영업하는지까지 확신하지 못할 수 있기 때문이다.
 
-출처 URL은 Kakao 장소 상세 URL과 영업시간 근거 URL을 중복 제거해 `sourceUrls`에 담고, 확인 시점을 `checkedAt`으로 남긴다.
+출처 URL은 Kakao 장소 상세 URL과 영업시간 근거 URL을 중복 제거해 `sourceUrls`에 담고, 확인 시점을 `checkedAt`으로 남긴다. Kakao 응답의 장소 URL이 비어 있어도 신뢰한 `kakaoPlaceId`로 `https://place.map.kakao.com/{id}`를 파생하므로 `externalUrl`과 `sourceUrls` 최소 1개를 유지한다.
 
 ### 3.8 Back 스키마를 변경하지 않고 반영되는 이유
 
@@ -1226,6 +1288,7 @@ verification_status == UNKNOWN
 4. **외부 장애 격리** — 일부 장소의 검색 실패나 지연이 전체 후보 생성 실패로 번지지 않는다.
 5. **LLM 권한 제한** — Gemini는 세 상태와 부가 정보만 반환하며 최종 제외 규칙과 이용 가능 태그는 서버 코드가 결정한다.
 6. **응답 계약 안정성** — 내부 검색 제공자나 구현이 바뀌어도 기존 후보 응답 스키마를 유지한다.
+7. **외부 호출의 조건부 절약** — 사전랭킹 상위 6개를 우선 검증하고, usable 후보가 부족할 때만 3개씩 확장한다. 좋은 후보를 일찍 확보하면 15개 전체 호출을 피한다.
 
 ### 3.10 현재 구현의 한계와 개선 방향
 
@@ -1243,9 +1306,9 @@ verification_status == UNKNOWN
 
 주소를 검색어에 포함해 위험을 줄이지만, 검색 결과가 정확히 같은 지점인지 서버가 주소 정규화로 재검증하지는 않는다.
 
-#### 4. 출처 URL을 allowlist로 재검증하지 않는다
+#### 4. 출처 URL allowlist는 출처 품질까지 보장하지 않는다
 
-프롬프트에는 검색 결과에 나온 URL만 반환하라고 지시하지만, 현재 서버는 Gemini가 반환한 `source`가 실제 입력 URL 중 하나인지 다시 대조하지 않는다. 다음 단계에서는 Serper 결과 URL 집합과 정확히 대조해 목록 밖 URL을 `null`로 만드는 것이 안전하다.
+서버는 Gemini의 `source`를 Serper 결과 URL 집합과 정확히 대조해 목록 밖 URL을 버린다. 따라서 모델이 새 URL을 지어내는 것은 막지만, 그 URL이 공식 사이트인지, 최신 정보인지, 스니펫이 실제 판정을 충분히 뒷받침하는지까지 증명하는 장치는 아니다.
 
 #### 5. 복잡한 영업시간은 LLM 판단에 의존한다
 
@@ -1253,19 +1316,23 @@ verification_status == UNKNOWN
 
 #### 6. 잘못된 `FAIL`은 좋은 후보를 제거할 수 있다
 
-`FAIL`은 Ranker 입력 전에 강제로 제외되므로 Gemini가 검색 근거를 잘못 해석하면 false negative가 발생할 수 있다. 실제 운영 전에는 날짜·요일·브레이크타임·상충 출처가 포함된 평가셋으로 `PASS / FAIL / UNKNOWN` 정확도를 검증해야 한다.
+`FAIL`은 사전랭킹 뒤 최종 Suggestion 조립에서 제외되므로 Gemini가 검색 근거를 잘못 해석하면 false negative가 발생할 수 있다. 실제 운영 전에는 날짜·요일·브레이크타임·상충 출처가 포함된 평가셋으로 `PASS / FAIL / UNKNOWN` 정확도를 검증해야 한다.
 
-#### 7. `PASS`와 영업시간 필드 사이의 불변식이 약하다
+#### 7. 최소 근거 불변식이 의미 정확도를 보장하지는 않는다
 
-현재 구조화 출력에서 `business_hours`와 `source`는 nullable이다. 모델이 `PASS`를 반환하면서 영업시간 문구를 누락하는 모순을 서버 validator가 아직 강제하지 않는다. `PASS`라면 영업시간과 근거 URL을 요구하고, 그렇지 않으면 `UNKNOWN`으로 낮추는 후처리가 필요하다.
+서버는 `PASS/FAIL`에 유효한 Serper source를 요구하고, `PASS`에는 `businessHours`도 요구한다. 이 조건이 빠지면 `UNKNOWN`으로 낮춘다. 다만 필드가 존재한다는 형식적 조건은 Gemini가 날짜·요일·브레이크타임을 올바르게 해석했다는 의미 정확도까지 보장하지 않는다.
 
 #### 8. 재시도·캐시 정책이 없다
 
 현재 장소별 검색 실패는 즉시 `UNKNOWN`으로 처리하며 동일 장소의 최근 검증 결과를 재사용하지 않는다. 재시도, 짧은 TTL 캐시, 제공자 장애 시 대체 검색원을 추가하면 비용과 안정성을 개선할 수 있다.
 
+#### 9. batching은 최악의 경우 외부 호출 수를 줄이지 못한다
+
+initial 6개에서 usable 후보를 충분히 확보하면 호출을 크게 줄일 수 있다. 하지만 `FAIL`이 계속되면 3개씩 확장해 최대 15개 후보를 모두 검증할 수 있다. 따라서 batching은 평균적인 비용·지연을 줄이려는 전략이지 외부 호출 수를 항상 9개 이하로 보장하는 상한은 아니다. `6`과 `3`도 학습으로 최적화한 값이 아니라 현재 서비스의 초기 정책이다.
+
 ### 3.11 발표 시연 예시
 
-같은 모임 시간에 세 장소가 서로 다른 상태가 되는 화면이 가장 이해하기 쉽다.
+같은 모임 시간에 사전랭킹 상위 후보들이 서로 다른 상태가 되고 fallback이 조건부로 실행되는 화면이 가장 이해하기 쉽다.
 
 ```text
 모임 시간: 2026-08-30 18:00~20:00
@@ -1277,16 +1344,27 @@ verification_status == UNKNOWN
 | 장소 B | “일요일 정기휴무” | `FAIL` | 추천 후보에서 제외 |
 | 장소 C | 종료 시각 정보 없음 | `UNKNOWN` | 후보 유지 + 영업 확인 안 됨 |
 
+배치 동작은 다음처럼 함께 보여준다.
+
+```text
+사전랭킹 1~6위 검증 결과 usable 2개
+→ 목표 3개 미달
+→ 다음 3개 추가 검증
+→ 여전히 부족하면 다음 3개 반복
+→ usable 후보를 사전랭킹 순서대로 최대 3개 조립
+```
+
 시연에서는 다음 두 점을 같이 보여준다.
 
 - `UNKNOWN` 장소가 후보에서는 사라지지 않는다.
 - `UNKNOWN` 장소에는 `openAtMeetingTime=true`나 이용 가능 태그가 붙지 않는다.
+- initial batch에서 usable 3개를 확보하면 fallback 호출이 발생하지 않는다.
 
 실제 Serper 검색 결과를 시연한다면 외부 검색 결과는 시점에 따라 달라질 수 있으므로, 발표 전에 결과를 캡처하거나 고정 fixture를 함께 준비하는 편이 안전하다.
 
 ### 3.12 발표용 1분 설명 초안
 
-> Kakao Local API는 실제 장소 ID와 주소를 찾는 데는 적합하지만, 그 장소가 확정된 모임 시간에 영업하는지까지는 알 수 없습니다. 그래서 각 후보의 장소명과 주소로 Serper에 영업시간과 휴무일을 검색하고, 상위 5개 결과의 제목·스니펫·URL을 Gemini에 전달합니다. Gemini는 웹을 직접 검색하는 것이 아니라 이 근거와 모임 날짜·시작·종료 시각을 비교해 PASS, FAIL, UNKNOWN 중 하나로 구조화 판정합니다. PASS는 모임 시간 전체가 영업시간 안에 있는 경우, FAIL은 휴무나 영업시간 밖인 경우, UNKNOWN은 정보가 부족하거나 충돌하는 경우입니다. 장소별 검증은 병렬로 실행하고 전체 20초 timeout을 두며, 검색 오류나 timeout이 난 장소는 삭제하지 않고 UNKNOWN으로 보존합니다. 대신 PASS일 때만 서버가 영업 확인 필드와 ‘모임 시간에 이용 가능’ 태그를 붙이고, FAIL은 Ranker 전에 제외합니다. 즉 외부 검색 장애에는 유연하게 대응하면서도 확인되지 않은 정보를 영업 중이라고 주장하지 않도록 설계했습니다.
+> Kakao Local API는 실제 장소 ID와 주소를 찾는 데는 적합하지만, 그 장소가 확정된 모임 시간에 영업하는지까지는 알 수 없습니다. 그렇다고 최대 15개 후보를 한꺼번에 웹 검증하면 호출 비용과 지연이 커집니다. 그래서 먼저 모임 목적 hard gate와 참여자별 공정성으로 후보 순서를 만든 뒤 1~6위를 병렬 검증합니다. 장소명과 주소로 Serper에 영업시간과 휴무일을 검색하고, Gemini는 이 근거와 한국 현지 모임 시간을 비교해 PASS, FAIL, UNKNOWN 중 하나로 구조화 판정합니다. 서버는 출처 URL을 실제 검색 결과와 대조하고, 확정 판정에 필요한 근거가 빠지면 UNKNOWN으로 낮춥니다. PASS와 UNKNOWN을 usable로 보며, usable 후보가 3개보다 적을 때만 다음 3개씩 확장합니다. 모든 batch는 하나의 20초 deadline을 공유합니다. 검색 오류나 timeout은 후보를 삭제하지 않고 UNKNOWN으로 보존하지만, PASS일 때만 서버가 영업 확인 필드와 ‘모임 시간에 이용 가능’ 태그를 붙입니다. 마지막에는 비-LLM Builder가 FAIL을 제외하고 사전랭킹 순서대로 기존 DTO 최대 3개를 조립합니다.
 
 ### 3.13 예상 질문과 답변
 
@@ -1298,6 +1376,10 @@ verification_status == UNKNOWN
 
 현재 사용하는 Kakao Local 키워드 검색 결과에는 장소 식별 정보는 있지만 확정된 날짜와 시간대 전체에 영업하는지 판정할 정보가 충분하지 않다. 그래서 별도 웹 검증 단계를 둔다.
 
+**Q. 왜 최대 15개를 한꺼번에 검증하지 않고 6개와 3개 batch로 나누나요?**
+
+장소 하나마다 Serper와 Gemini 호출이 필요하다. 최종 응답 목표는 3개이므로 공정성 상위 6개를 먼저 병렬 검증하고, `FAIL` 때문에 usable 후보가 부족할 때만 다음 3개씩 확장한다. 상황에 따라 최대 15개를 모두 확인할 수 있으므로 항상 호출 수가 줄어드는 것은 아니다. initial 6과 fallback 3은 학습으로 최적화한 값이 아니라 현재 서비스의 초기 정책이다.
+
 **Q. 검색이 실패하면 그 장소를 왜 제거하지 않나요?**
 
 검색 실패는 장소가 닫았다는 증거가 아니다. 무조건 제거하면 외부 서비스 장애 때문에 정상 후보가 사라진다. 대신 `UNKNOWN`으로 후보는 보존하고 사용자에게 영업이 확인됐다는 표시는 하지 않는다.
@@ -1305,6 +1387,10 @@ verification_status == UNKNOWN
 **Q. `UNKNOWN` 후보를 추천하면 위험하지 않나요?**
 
 영업 확인 측면에서는 불확실성이 남는다. 그래서 `businessHoursVerified=false`, `openAtMeetingTime=null`로 구분하고 이용 가능 태그도 붙이지 않는다. 후보 부족 방지와 사실의 확정적 표현을 분리한 선택이다.
+
+**Q. `UNKNOWN`도 fallback 여부를 셀 때 usable에 포함하나요?**
+
+포함한다. `UNKNOWN`은 닫혔다는 증거가 아니기 때문에 추천 후보로 보존한다. 다만 usable과 검증 성공은 다른 개념이며, `UNKNOWN`에는 영업 확인 필드나 이용 가능 태그를 붙이지 않는다.
 
 **Q. 구조화 출력이면 판정이 정확하다는 뜻인가요?**
 
@@ -1320,15 +1406,17 @@ verification_status == UNKNOWN
 
 ### 3.14 코드 근거
 
-- Kakao 장소 검색: `app/graph/nodes/l_candidate_place_search.py`
+- SearchPlan 생성과 Kakao 후보 최대 15개 수집: `app/graph/nodes/n_candidate_activity_decider.py`, `app/graph/nodes/l_candidate_place_search.py`
+- context hard gate와 공정성 사전랭킹: `app/graph/nodes/n_candidate_ranker.py`, `app/graph/fairness.py`
 - Serper API 클라이언트: `app/services/serper_client.py`
 - 검색어와 Gemini 판정 프롬프트: `app/prompts/n_candidate_place_verifier.py`
-- 병렬 검증·3-state·20초 timeout: `app/graph/nodes/n_candidate_place_verifier.py`
-- `FAIL` 제외와 응답 필드 파생: `app/graph/nodes/n_candidate_ranker.py`
+- initial 6/fallback 3개씩·근거 정규화·3-state·공통 20초 deadline: `app/graph/nodes/n_candidate_place_verifier.py`
+- `FAIL` 제외와 기존 DTO 조립: `app/graph/nodes/l_candidate_suggestion_builder.py`
 - 후보 응답 DTO: `app/schemas/candidates.py`
 - 그래프 연결: `app/graph/build_graph.py`
 - 노드 실행 흐름: `docs/ai-pipeline-walkthrough.md`
 - Back↔AI 최종 계약: `docs/api-design2-backend.md`
 - 검증 fallback 테스트: `tests/graph/test_candidate_place_verifier.py`
-- Ranker 후처리 테스트: `tests/graph/test_ranker_explainer.py`
+- Pre-Ranker 테스트: `tests/graph/test_ranker_explainer.py`
+- Suggestion Builder 테스트: `tests/graph/test_candidate_suggestion_builder.py`
 - Serper 클라이언트 테스트: `tests/services/test_serper_client.py`

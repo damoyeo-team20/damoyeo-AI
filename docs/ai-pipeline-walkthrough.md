@@ -13,7 +13,7 @@
 - 목적 대화 요약(`/context/messages`, `/context`)은 모임을 만들 때 한 번 호출되고 끝납니다.
 - 날짜·시간 확정(`/schedule`)은 참여자들이 가능 날짜를 다 제출한 뒤, 또 별도로 호출됩니다.
 
-AI는 호출 사이에 아무것도 기억하지 않습니다 (`app/graph/*_state.py`가 매 요청마다 새로 만들어지는 이유). "그룹 컨텍스트"라는 것은 AI가 만드는 게 아니라, **Back이 이 세 결과를 각각 DB에 저장해뒀다가**(`user_preferences`, `meetings.purpose`, `meetings.confirmed_start_at/end_at`) `/candidates`를 호출할 때 한 번에 모아서 실어 보내는 것입니다. 그래서 4단계(활동 계획→장소 검색→검증→랭킹)만 실제로 LangGraph 하나로 이어진 계산이고, 나머지는 각자 따로 노는 API입니다.
+AI는 호출 사이에 아무것도 기억하지 않습니다 (`app/graph/*_state.py`가 매 요청마다 새로 만들어지는 이유). "그룹 컨텍스트"라는 것은 AI가 만드는 게 아니라, **Back이 이 세 결과를 각각 DB에 저장해뒀다가**(`user_preferences`, `meetings.purpose`, `meetings.confirmed_start_at/end_at`) `/candidates`를 호출할 때 한 번에 모아서 실어 보내는 것입니다. 그래서 4단계(검색 계획→Kakao 후보 수집→컨텍스트·공정성 사전랭킹→선별 영업 검증→응답 조립)만 실제로 LangGraph 하나로 이어진 계산이고, 나머지는 각자 따로 노는 API입니다.
 
 ```
 [1] /preferences/extract  ─┐
@@ -206,18 +206,33 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
 
 여기서부터가 실제로 하나의 LangGraph로 이어진 계산입니다(`app/graph/build_graph.py`). Back이 `meeting`(purpose/region), `confirmedSlot`(3단계 결과), `participants[].preferences`(1단계 결과 누적)를 한 번에 실어 보냅니다. 라우트와 그래프는 `participants[].userId` 경계를 그대로 보존합니다. 최종 문장은 여전히 특정 참여자를 지칭하지 않지만, 내부 계산에서는 각 참여자의 만족도를 따로 계산합니다.
 
-### 4.1 Candidate Activity Decider
+### 4.1 Candidate Activity Decider — SearchPlan 생성
 
 | | |
 | --- | --- |
 | 파일 | `app/graph/nodes/n_candidate_activity_decider.py` |
+| 그래프 노드 | `decide_activities` |
 | 입력 | `meeting.purpose`, `meeting.region`, `confirmed_slot`, `meeting_memory_summary`(지난 모임 요약, 없으면 "(없음)"), `participants[].preferences` |
 | 방식 | LLM 구조화 출력 |
-| 출력 | (정상) `activities`, `meeting_tags`, `summary` / (충돌) `action_required` |
+| 출력 | (정상) `search_plans`, `meeting_tags`, `summary` / (충돌) `action_required` |
 
 이 파이프라인의 진입 노드이자 핵심 판단 지점입니다(`app/prompts/n_candidate_activity_decider.py`). 세 가지를 한 번에 결정합니다.
 
-**① activities와 검색어** — 활동 1~3개, 각각 Kakao 키워드 검색에 바로 쓸 한글 검색어(`searchQueries`) 1~3개. **Specificity Wins 규칙**: 넓은 범주 선호와 구체적 선호가 충돌하면 구체적인 쪽이 이깁니다 — "해산물은 별로야"(NEGATIVE)와 "조개는 좋아"(POSITIVE)가 같이 있어도 조개 관련 활동을 배제하지 않습니다. `rationaleGroup`은 반드시 집단 수준 표현("참여자 다수가 술자리를 선호합니다" O, "A가 좋아해서" X).
+Back이 `confirmedSlot`을 UTC(`Z`)로 직렬화해도 프롬프트에는 `Asia/Seoul` 현지 시각으로
+변환해 전달합니다. 예를 들어 `09:00Z~11:00Z`는 한국 시각 `18:00~20:00`으로 보입니다.
+응답의 `proposedStartAt/EndAt`은 같은 실제 시점을 나타내는 원본 값을 그대로 사용합니다.
+
+**① SearchPlan과 검색어** — 내부 검색 계획 1~4개, 각 계획마다 Kakao 키워드 검색에 바로 쓸 한글 검색어(`searchQueries`) 1~3개를 만듭니다. 과거의 `activity`라는 내부 모델 필드가 남아 있지만, 이 값은 최종 활동 확정값이 아니라 **후보 풀을 넓히는 검색 버킷의 label**입니다. 그래프 상태에서는 `search_plans`로 명확히 구분합니다.
+
+각 계획은 생성 근거를 `source`로 표시합니다.
+
+- `MEETING_PURPOSE`: 명시적인 모임 목적에서 나온 계획. 최소 1개 필수
+- `PARTICIPANT_PREFERENCE`: 참여자 선호로 후보 범위를 넓히는 계획. 최대 2개
+- `MEETING_MEMORY`: 과거 모임 요약에 실제 근거가 있을 때 만드는 계획. 최대 1개
+
+서버는 최종 SearchPlan을 `MEETING_PURPOSE → PARTICIPANT_PREFERENCE → MEETING_MEMORY` 순으로 정렬합니다. 같은 Kakao 장소가 여러 계획에서 발견되면 뒤의 전역 중복 제거가 먼저 본 계획의 provenance를 보존하므로, 명시적 목적에서 나온 근거를 선호·과거 메모리보다 우선하기 위한 순서입니다.
+
+**Specificity Wins 규칙**도 유지합니다. 넓은 범주 선호와 구체적 선호가 충돌하면 구체적인 쪽을 우선합니다 — "해산물은 별로야"(NEGATIVE)와 "조개는 좋아"(POSITIVE)가 같이 있어도 조개 관련 검색 계획을 배제하지 않습니다. `rationaleGroup`은 반드시 집단 수준 표현("참여자 다수가 술자리를 선호합니다" O, "A가 좋아해서" X)입니다. 지역은 Kakao 클라이언트가 별도로 붙이므로 LLM 검색어에서 중복 지역 접두사를 제거합니다.
 
 **② meetingTags** — 이번 자리의 성격. 4개의 독립된 축, **같은 축에서 최대 1개만**:
 
@@ -228,52 +243,59 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
 | 분위기 | `LIVELY` / `QUIET` |
 | 예산 | `BUDGET_FRIENDLY` |
 
-근거가 약한 축은 아예 비웁니다 (억지로 채우지 않음).
+근거가 약한 축은 아예 비웁니다(억지로 채우지 않음). 프롬프트 지시만 믿지 않고 서버 validator도 `ACTIVE/CONVERSATION_FOCUSED`, `ALCOHOL_FRIENDLY/NO_ALCOHOL`, `LIVELY/QUIET`처럼 같은 축의 상반된 태그가 함께 오면 `MODEL_RESPONSE_INVALID`로 거부합니다.
 
 **③ summary** — 이번 제안을 무엇을 기준으로 골랐는지 한 문장.
 
-**충돌 처리**: 모임 목적과 참여자 기존 선호가 강하게 충돌하면(예: 목적은 술자리인데 다수가 음주 비선호) `status=CONFLICT`을 반환하고 `activities`는 비웁니다. 이 경우 뒤 노드들은 아예 실행되지 않고 그래프가 즉시 종료됩니다 — `action_required`(`type=PREFERENCE_CONFLICT`, `hostRequest`=모임 목적, `conflictingPreferenceCodes`)로 응답합니다.
+**충돌 처리**: 모임 목적과 참여자 기존 선호가 강하게 충돌하면(예: 목적은 술자리인데 다수가 음주 비선호) `status=CONFLICT`을 반환하고 검색 계획을 비웁니다. 이 경우 뒤 노드들은 실행되지 않고 그래프가 즉시 종료됩니다 — `action_required`(`type=PREFERENCE_CONFLICT`, `hostRequest`=모임 목적, `conflictingPreferenceCodes`)로 응답합니다.
 
 ### 4.2 Candidate Place Search — 비-LLM
 
 | | |
 | --- | --- |
 | 파일 | `app/graph/nodes/l_candidate_place_search.py` |
-| 입력 | `meeting.region`, `activities`(4.1의 각 검색어), `excluded_external_place_ids` |
+| 그래프 노드 | `search_places` |
+| 입력 | `meeting.region`, `search_plans`(4.1의 각 검색어), `excluded_external_place_ids` |
 | 방식 | Kakao Local API 키워드 검색 (LLM 아님) |
-| 출력 | `place_candidates` |
+| 출력 | `place_candidates`(최대 15개), `search_metrics` |
 
-활동마다 `searchQueries` 각각으로 Kakao Local API(`search/keyword.json`)를 `"{region} {검색어}"`로 호출합니다(활동당 검색어 하나마다 최대 3개 조회). 이미 나온 `kakao_place_id`(이번 실행 내 중복, `excludedExternalPlaceIds`)는 걸러내고, 활동별로 모은 결과를 **최대 3개까지만** 남깁니다. Kakao 응답에서 가져오는 값: `id`, `place_name`, `road_address_name`(없으면 `address_name`), `category_name`, `place_url`, 좌표(`y`=위도, `x`=경도, 문자열로 와서 숫자로 변환).
+각 SearchPlan의 `searchQueries`로 Kakao Local API(`search/keyword.json`)를 `"{region} {검색어}"` 형태로 호출합니다. 검색어 하나당 최대 5개를 요청하고, 동시에 실행하는 검색은 최대 4개로 제한합니다.
 
-### 4.3 Candidate Place Verifier
+검색 결과는 바로 상위 3개로 자르지 않습니다. 먼저 `excludedExternalPlaceIds`를 제거합니다. 하나의 계획 안에서도 여러 query 결과를 한 개씩 번갈아 섞어 첫 검색어가 계획의 5개 자리를 독점하지 않게 합니다. 그다음 계획별 후보도 round-robin으로 합치면서 전역 장소 중복을 제거합니다. 한 계획은 최대 5개, 전체는 최대 15개입니다. 이 두 단계의 균형 선택으로 공정성 계산 전에 후보 폭을 확보합니다.
 
-| | |
-| --- | --- |
-| 파일 | `app/graph/nodes/n_candidate_place_verifier.py` |
-| 입력 | `place_candidates`, `confirmed_slot`(날짜/시작/종료 시각) |
-| 방식 | 검색(Serper API) → 판정(LLM 구조화 출력), 장소별 **병렬** 실행, 전체 20초 타임아웃 |
-| 출력 | `verified_places`, `verification_timed_out` |
+Kakao 응답에서 가져오는 값은 `id`, `place_name`, `road_address_name`(없으면 `address_name`), `category_name`, `place_url`, 좌표(`y`=위도, `x`=경도, 문자열에서 숫자로 변환)입니다. 각 후보에는 어떤 SearchPlan에서 왔는지 `search_plan_label/source/rationale`도 함께 보존합니다.
 
-장소마다 검색 한 번(비-LLM) + LLM 판정 한 번을 합니다.
-
-1. **검색**: `app/services/serper_client.py`로 [Serper](https://serper.dev) 검색 API를 호출합니다. 검색어는 `"{place_name} {address} 영업시간 휴무일"`(`app/prompts/n_candidate_place_verifier.py`의 `SEARCH_QUERY_TEMPLATE`, LLM 프롬프트가 아니라 순수 문자열). 상위 5개 결과(제목·스니펫·출처 URL)를 받아 텍스트로 정리합니다.
-   > 원래는 Gemini의 `google_search` grounding 도구로 이 단계까지 LLM이 직접 검색했지만, grounding이 일반 텍스트 생성과 별도의 훨씬 빡빡한 할당량을 갖고 있어 자주 `429`가 나서 검색만 Serper로 분리했습니다(2026-08-21). 판정 단계는 원래부터 grounding과 무관한 일반 Gemini 호출이라 그대로입니다.
-2. **판정**: 검색 결과 텍스트만 근거로 구조화 출력 `{status, businessHours, source}` 생성(`CLASSIFY_SYSTEM_PROMPT`, 기존과 동일). `status`는 `PASS`(그 시간대가 영업시간 안)/`FAIL`(휴무 또는 시간대 벗어남)/`UNKNOWN`(정보 부족) 3-state. **`UNKNOWN`을 임의로 `PASS`/`FAIL`로 단정하지 않습니다.**
-
-20초 안에 못 끝난 작업은 취소하지만 장소 후보 자체는 버리지 않고 `UNKNOWN`으로 복원하며(`verification_timed_out=true`), 검색/판정 중 예외가 나도 해당 장소는 `UNKNOWN`으로 남습니다. 따라서 영업시간을 확인하지 못했다는 이유만으로 추천 후보가 사라지지 않습니다. `app/core/config.py`의 `SKIP_BUSINESS_HOURS_VERIFICATION` 플래그가 켜져 있으면 검색·판정을 아예 생략하고 즉시 `UNKNOWN`을 반환합니다(빠른 로컬 테스트용).
-
-### 4.4 Candidate Fairness Ranker
+### 4.3 Candidate Context/Fairness Pre-Ranker
 
 | | |
 | --- | --- |
-| 파일 | `app/graph/nodes/n_candidate_ranker.py` |
-| 입력 | `verified_places`(`FAIL` 제외), `participants[].preferences`, `meeting.purpose`, `activities`의 `rationale_group` |
-| 방식 | LLM 의미 관계 판정 + 순수 Python 만족도·공정성 계산 + 서버 후처리 |
-| 출력 | `suggestions` (최대 3개) |
+| 파일 | `app/graph/nodes/n_candidate_ranker.py`, `app/graph/fairness.py` |
+| 그래프 노드 | `rank_and_explain` |
+| 입력 | `place_candidates`(최대 15개), `participants[].preferences`, `meeting.purpose` |
+| 방식 | LLM 의미 관계 판정 + hard gate + 순수 Python 만족도·공정성 계산 |
+| 출력 | `ranked_candidates`(영업 검증 우선순위) |
 
-`FAIL`이 아닌 후보(`PASS`, `UNKNOWN` 포함)와 참여자별 선호를 LLM에 넘깁니다. 프롬프트(`app/prompts/n_candidate_ranker.py`)에는 장소당 `kakaoPlaceId`/`activity`/`activityRationale`/`name`/`category`/`verificationStatus`만 전달됩니다(영업시간 문구·좌표 등은 안 줌).
+비용이 큰 웹 영업 검증 전에 모든 Kakao 후보를 평가해 우선순위를 만듭니다. 파일명은 기존 `n_candidate_ranker.py`를 유지하지만, 이 노드가 만드는 것은 최종 API의 1~3위가 아니라 **어떤 후보부터 영업 검증할지 정하는 사전랭킹**입니다.
 
-LLM은 후보를 고르거나 순위를 매기지 않고 **모든 후보를 정확히 한 번씩** 평가합니다. 각 후보에서 모든 `(userId, vocabularyCode)` 쌍의 관계를 다음 셋 중 하나로 반환합니다.
+최대 15개를 Gemini 구조화 출력 한 번에 넣지 않습니다. 후보를 5개씩 최대 3 batch로 나누고 `asyncio.gather`로 병렬 평가한 뒤 결과를 merge합니다. 각 batch와 merge 결과 모두 후보·참여자·선호 관계의 완전성을 검증하고, 이후 원래 place list 순서로 점수화하므로 모델 배열 순서에 의존하지 않습니다. 출력 크기는 제한하면서 누락된 평가가 조용히 섞이는 것도 막습니다.
+
+LLM은 후보를 고르거나 숫자 점수를 만들지 않고, 모든 후보를 정확히 한 번씩 평가합니다. 후보마다 두 종류의 제한된 의미 관계와 집단 수준 `reasons`·일반 태그를 반환합니다.
+
+#### 모임 목적 적합성은 hard gate
+
+`contextRelation`은 다음 셋 중 하나입니다.
+
+| 관계 | 처리 |
+| --- | --- |
+| `DIRECT` | 명시적인 모임 목적에 직접 부합. 공정성 계산 대상으로 유지 |
+| `PARTIAL` | 함께 고려할 수 있는 후보. 공정성 계산 대상으로 유지 |
+| `NONE` | 모임 목적과 관련 있다는 근거가 없음. **영업 검증 전에 제외** |
+
+`NONE`을 `0점` 같은 수식 가중치로 넣지 않습니다. 개인 선호 점수가 높아도 명시적 모임 목적과 무관하면 후보 자격 자체가 없다는 gate 정책입니다. 공정성은 목적을 만족한 후보끼리만 비교합니다. `DIRECT/PARTIAL`은 공정성 수식에 숫자로 섞지 않으며, 공정성 값까지 같은 경우에만 `DIRECT`를 tie-break로 우선합니다.
+
+#### 참여자 선호 관계와 공정성 계산
+
+각 후보와 모든 `(userId, vocabularyCode)` 쌍의 `preferenceRelation`은 다음 셋 중 하나입니다.
 
 | 관계 | 내부 값 | 의미 |
 | --- | ---: | --- |
@@ -281,11 +303,9 @@ LLM은 후보를 고르거나 순위를 매기지 않고 **모든 후보를 정�
 | `PARTIAL` | `0.5` | 일부 관련 |
 | `NONE` | `0.0` | 관련 근거 없음 |
 
-relation은 긍정·부정을 뜻하지 않습니다. 예를 들어 매운 음식점은 `SPICY_FOOD/POSITIVE`와 `SPICY_INTOLERANT/NEGATIVE` 모두 `DIRECT`입니다. 서버가 `sentiment`를 적용해 전자는 높은 만족도, 후자는 낮은 만족도로 바꿉니다. LLM은 이 관계 외에 후보별 `reasons` 1~3개와 기존 후보 태그만 반환합니다.
+relation은 긍정·부정을 뜻하지 않습니다. 예를 들어 매운 음식점은 `SPICY_FOOD/POSITIVE`와 `SPICY_INTOLERANT/NEGATIVE` 모두 `DIRECT`입니다. 서버가 요청의 `sentiment`를 적용해 전자는 높은 만족도, 후자는 낮은 만족도로 바꿉니다.
 
-모델 결과는 서버가 엄격하게 검증합니다. 입력에 없거나 중복된 장소 ID·사용자 ID·선호 코드가 있거나, 후보 또는 선호 평가가 하나라도 빠지면 `502 MODEL_RESPONSE_INVALID`입니다. 잘못된 값을 조용히 순위 계산에 섞지 않습니다.
-
-서버의 순수 계산은 `app/graph/fairness.py`에 있습니다.
+모델 결과의 후보 ID·사용자 ID·선호 코드와 완전성을 서버가 대조합니다. 입력에 없거나 중복된 ID가 있거나 후보 또는 선호 평가가 하나라도 빠지면 `502 MODEL_RESPONSE_INVALID`입니다. 검증을 통과하면 `app/graph/fairness.py`가 다음 수식을 계산합니다.
 
 ```text
 POSITIVE → d(p)=+1       NEGATIVE → d(p)=-1
@@ -298,17 +318,60 @@ F(c)     = 모든 참여자 u의 최솟값
 Score(c) = 100 × [0.7 × S(c) + 0.3 × F(c)]
 ```
 
-선호가 없는 참여자는 `u(i,c)=0.5`의 중립값입니다. `STRONG + NEGATIVE`가 후보와 직접 관련되면 개인 만족도는 `0.0`까지 내려가지만 후보를 즉시 제거하지는 않습니다. 대신 코드가 `_ALLERGY`로 끝나는 알레르기 Vocabulary와 후보의 관계를 `DIRECT`로 판정한 경우에만 안전 조건으로 veto합니다.
+선호가 없는 참여자는 `u(i,c)=0.5`의 중립값입니다. 일반 `STRONG + NEGATIVE` 직접 충돌은 만족도 `0.0`까지 내려가지만 즉시 제거하지 않습니다. 코드가 `_ALLERGY`로 끝나는 알레르기 Vocabulary와 후보가 `DIRECT`일 때만 안전 조건으로 veto합니다.
 
-후보는 `Score → F → S → 원래 Kakao 순서`로 정렬하고 최대 3개를 선택합니다. 즉 LLM 응답 배열의 순서는 최종 순위에 영향을 주지 않습니다.
+남은 후보는 `Score → F → S → contextRelation(DIRECT 우선) → 원래 Kakao 순서`로 정렬합니다. 여기서 최대 3개로 자르지 않고 모든 생존 후보를 `ranked_candidates`에 남깁니다. 이 순서가 다음 단계의 웹 검증 우선순위입니다. LLM 응답 배열의 순서는 결과에 영향을 주지 않습니다.
 
-서버가 이후 붙이는 값(LLM 산출 아님):
-- `AVAILABLE_AT_MEETING_TIME` 태그와 `openAtMeetingTime`: 4.3의 `verification_status == PASS`일 때만 붙임. `UNKNOWN`이면 태그도 없고 `openAtMeetingTime=null`.
-- `matchedPreferenceDomains`: `POSITIVE` 선호 중 `DIRECT/PARTIAL`로 판정되어 실제 선정에 기여한 코드만 Vocabulary의 `domain`으로 변환.
-- `proposedStartAt`/`proposedEndAt`: 3단계의 `confirmedSlot`을 모든 제안에 그대로 사용.
-- `sourceUrls`: 4.3의 `place_url`과 `verification_source`를 중복 제거.
+개인 만족도와 공정성 점수는 Back 응답에 새 필드로 추가하지 않습니다. LangSmith에서는 그래프 노드 `rank_and_explain` 아래 후보별 `fairness_score` child span에서 `participantSatisfaction`, 평균 `S`, 최저 `F`, 최종 `score`, `vetoed`를 확인할 수 있습니다.
 
-개인 만족도와 공정성 점수는 AI 내부 랭킹 근거 및 debug trace에만 남고, Back 응답에는 새 필드를 추가하지 않습니다.
+### 4.4 Candidate Place Verifier — 선별 웹 검증
+
+| | |
+| --- | --- |
+| 파일 | `app/graph/nodes/n_candidate_place_verifier.py` |
+| 그래프 노드 | `verify_places` |
+| 입력 | `ranked_candidates`, `confirmed_slot`(날짜/시작/종료 시각) |
+| 방식 | 상위 6개 병렬 검증 → usable 3개 미만이면 다음 3개씩 반복, 모든 batch가 공통 20초 예산 사용 |
+| 출력 | `verified_places`, `verification_timed_out`, `verification_metrics` |
+
+최대 15개 전체를 곧바로 웹 검색하지 않습니다. 사전랭킹 1~6위를 initial batch로 병렬 검증하고, 그 결과 `PASS/UNKNOWN`인 usable 후보가 3개보다 적을 때만 다음 순위 후보를 3개씩 fallback batch로 검증합니다. usable 3개 확보, ranked 후보 소진, 공통 20초 deadline 중 하나에서 멈춥니다. 모든 batch는 같은 deadline을 공유합니다. usable은 “영업이 확인됐다”가 아니라 **최종 후보로 남길 수 있다**는 뜻입니다.
+
+장소 하나의 검증은 다음 순서입니다.
+
+1. **검색**: `app/services/serper_client.py`로 [Serper](https://serper.dev) 검색 API를 호출합니다. 검색어는 `"{place_name} {address} 영업시간 휴무일"`이라는 고정 문자열입니다. 상위 5개 결과의 제목·스니펫·출처 URL을 텍스트로 정리합니다.
+   > 원래는 Gemini의 `google_search` grounding 도구로 검색했지만 일반 생성과 별도의 할당량 때문에 `429`가 자주 발생해 검색만 Serper로 분리했습니다. Gemini는 검색 결과 판정만 담당합니다.
+2. **현지 시각 정규화**: `confirmedSlot`이 UTC(`Z`)여도 날짜·시작·종료를 `Asia/Seoul`로 바꿔 국내 매장 영업시간과 같은 기준으로 비교합니다.
+3. **판정과 근거 정규화**: Gemini가 검색 결과 텍스트만 근거로 `{status, businessHours, source}`를 구조화 출력합니다. 서버는 `source`가 실제 Serper 결과 URL 중 하나인지 allowlist로 대조합니다. `PASS/FAIL`인데 유효한 source가 없거나, `PASS`인데 `businessHours`가 없으면 확정 판정을 그대로 쓰지 않고 `UNKNOWN`으로 낮춥니다.
+
+| 상태 | 의미 | usable 여부 |
+| --- | --- | --- |
+| `PASS` | 해당 날짜에 영업하고 모임 시간 전체가 영업시간 안 | usable |
+| `FAIL` | 휴무·폐업 또는 모임 시간대가 영업시간 밖 | 제외 |
+| `UNKNOWN` | 결과 없음·정보 부족·충돌·오류·timeout | usable, 단 영업 확인 표시는 하지 않음 |
+
+`UNKNOWN`을 `PASS`나 `FAIL`로 단정하지 않습니다. 검색·판정 예외 또는 deadline 내 미완료 task도 장소 정보를 버리지 않고 `UNKNOWN`으로 복원합니다. 그래서 `UNKNOWN`은 usable 수에는 포함되지만 이후 `businessHoursVerified=false`, `openAtMeetingTime=null`로 구분됩니다. 첫 6개가 모두 `UNKNOWN`이어도 usable 후보는 충분하므로 fallback 검색을 시작하지 않습니다.
+
+`SKIP_BUSINESS_HOURS_VERIFICATION`이 켜져 있으면 검색·판정을 생략하고 `UNKNOWN`으로 처리합니다. `verification_metrics`에는 사전랭킹 후보 수, 검증 대상으로 처리한 후보 수, usable 후보 수를 내부 관측값으로 남깁니다.
+
+### 4.5 Candidate Suggestion Builder — 비-LLM
+
+| | |
+| --- | --- |
+| 파일 | `app/graph/nodes/l_candidate_suggestion_builder.py` |
+| 그래프 노드 | `build_suggestions` |
+| 입력 | `verified_places`, `ranked_candidates`, `confirmed_slot` |
+| 방식 | `FAIL` 제외 + 사전랭킹 순서 보존 + 기존 DTO 조립 |
+| 출력 | `suggestions`(최대 3개) |
+
+검증된 장소 중 `PASS/UNKNOWN`만 남기고 사전랭킹 순서를 그대로 유지해 최대 3개를 선택합니다. 이 노드에는 LLM 호출이 없습니다. Pre-Ranker가 만든 `reasons`와 일반 태그를 사용하되, 사실 판정 값은 코드가 붙입니다.
+
+- `AVAILABLE_AT_MEETING_TIME`, `businessHoursVerified=true`, `openAtMeetingTime=true`: `verification_status == PASS`일 때만 파생
+- `UNKNOWN`: `businessHoursVerified=false`, `openAtMeetingTime=null`, 이용 가능 태그 없음
+- `matchedPreferenceDomains`: 실제 선정에 기여한 긍정 선호 코드를 Vocabulary `domain`으로 변환
+- `proposedStartAt/EndAt`: 3단계의 `confirmedSlot` 원본 사용
+- `sourceUrls`: Kakao 장소 URL과 영업시간 근거 URL 중복 제거. Kakao 응답의 URL이 비어 있으면 신뢰한 `kakao_place_id`로 `https://place.map.kakao.com/{id}`를 파생해 `externalUrl`과 최소 한 개의 `sourceUrls`를 보장
+
+공정성 점수, contextRelation, verificationStatus 같은 내부 필드는 Back 응답에 추가하지 않습니다. 기존 `Suggestion` DTO와 최대 3개라는 계약을 그대로 유지하면서 내부 선택 순서만 바꾼 구조입니다.
 
 ---
 
@@ -323,26 +386,33 @@ Score(c) = 100 × [0.7 × S(c) + 0.3 × F(c)]
         ▼  (userId별 선호 경계 유지)
 ┌─────────────────────────────────────────────────────────┐
 │ Candidate Activity Decider (LLM)                         │
-│  → activities[], meetingTags[], summary                  │
+│  → SearchPlan 1~4개, meetingTags[], summary               │
 │  → (충돌 시) actionRequired로 즉시 종료                    │
 └─────────────────────────────────────────────────────────┘
-        │ activities[].searchQueries
+        │ searchPlans[].searchQueries
         ▼
 ┌─────────────────────────────────────────────────────────┐
 │ Candidate Place Search (Kakao, 비-LLM)                    │
-│  → place_candidates[]                                    │
+│  → 계획별 최대 5개, 전체 placeCandidates 최대 15개          │
 └─────────────────────────────────────────────────────────┘
         │
-        ▼ (장소별 병렬, 최대 20초)
-┌─────────────────────────────────────────────────────────┐
-│ Candidate Place Verifier (Serper 검색 + LLM 구조화 판정)   │
-│  → verified_places[] (PASS/FAIL/UNKNOWN)                 │
-└─────────────────────────────────────────────────────────┘
-        │ (FAIL 제외)
         ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Candidate Fairness Ranker                                 │
-│  LLM 관계 판정 → Python u/S/F/Score 계산 → 최대 3개        │
-│  → suggestions[] (기존 rank·reasons·tags·domains)          │
+│ Candidate Context/Fairness Pre-Ranker (후보 5개씩 병렬)      │
+│  context NONE hard gate → Python u/S/F/Score 사전랭킹      │
+│  → rankedCandidates[] (최종 3개가 아니라 검증 우선순위)      │
+└─────────────────────────────────────────────────────────┘
+        │ 상위 1~6위
+        ▼
+┌─────────────────────────────────────────────────────────┐
+│ Candidate Place Verifier (Serper + Gemini, 공통 20초)       │
+│  1~6위 병렬 → usable<3이면 다음 3개씩 반복                  │
+│  PASS/UNKNOWN=usable, FAIL=제외                            │
+└─────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────┐
+│ Candidate Suggestion Builder (비-LLM)                     │
+│  사전랭킹 순서를 유지해 기존 Suggestion DTO 최대 3개 조립     │
 └─────────────────────────────────────────────────────────┘
 ```

@@ -50,7 +50,7 @@ Back이 전원 가능 날짜 계산
         ↓
 AI가 날짜·시간 확정
         ↓
-AI가 장소 검색·검증·랭킹
+AI가 장소 검색·공정성 사전랭킹·선별 검증
         ↓
 최종 장소 후보 최대 3개 제시
         ↓
@@ -71,6 +71,7 @@ flowchart LR
     Back --> DB[("PostgreSQL\nRDS")]
     AI --> Gemini["Gemini API"]
     AI --> Kakao["Kakao Local API"]
+    AI --> Serper["Serper Search API"]
 
     subgraph CICD["CI/CD"]
         direction LR
@@ -99,12 +100,13 @@ flowchart LR
     S --> G
 
     subgraph DECISION["후보 생성 · /candidates"]
-        G --> A["활동 계획"]
-        A --> V["장소 검색·검증"]
-        V --> R["랭킹·설명"]
+        G --> A["검색 계획 1~4개"]
+        A --> K["Kakao 후보 최대 15개"]
+        K --> R["컨텍스트 gate·공정성 사전랭킹"]
+        R --> V["상위 후보 영업 검증"]
     end
 
-    R --> O["최종 후보 3개"]
+    V --> O["기존 DTO로 최종 후보 최대 3개"]
 ```
 
 #### 상세 파이프라인
@@ -143,11 +145,12 @@ flowchart TD
 
     subgraph EP5["POST /ai/meetings/{meetingId}/candidates"]
         direction TB
-        E1["Activity Decider\n활동·태그 결정"]:::llm
-        E1 -->|정상| E2["Place Search (Kakao)"]:::code
+        E1["Activity Decider\n검색 계획 1~4개·태그 결정"]:::llm
+        E1 -->|정상| E2["Place Search (Kakao)\n후보 최대 15개"]:::code
         E1 -->|목적-선호 충돌| E5["actionRequired 반환"]:::io
-        E2 --> E3["Place Verifier\n영업시간 검증(병렬)"]:::llm
-        E3 --> E4["Ranker\n최대 3개 랭킹·사유 생성"]:::llm
+        E2 --> E3["Context/Fairness Pre-Ranker\nNONE gate → 공정성 순서"]:::llm
+        E3 --> E4["Place Verifier\n상위 6 → usable 3개까지 다음 3 반복"]:::llm
+        E4 --> E6["Suggestion Builder\n기존 DTO 최대 3개 조립"]:::code
     end
 ```
 
@@ -164,14 +167,17 @@ flowchart TD
 | Context Date Reselector | 확정 날짜를 후보 목록 중 하나로 재선택 | 어떤 날짜인지 불명확하면 바꾸지 않고 되물음. 후보 밖 날짜는 스키마로 원천 차단 | `app/graph/nodes/n_context_date_reselector.py` |
 | Schedule Resolver | Back이 계산한 전원 가능 날짜 중 하루를 선택 + 이유 생성 | 고를 수 있는 날짜를 응답 스키마에서 `Literal`로 제약 | `app/graph/nodes/n_schedule_resolver.py` |
 | Schedule Slot Builder | 선택된 날짜 + 선호 시간대 + 모임 길이로 시작/종료 시각 계산 | 비-LLM. 시간대 창(윈도우)보다 모임 길이가 길면 에러 반환 | `app/graph/nodes/l_schedule_slot_builder.py` |
-| Candidate Activity Decider | 목적·참여자 선호·과거 모임 요약을 종합해 활동·태그·요약 결정 | 목적과 선호가 정면 충돌하면 이후 노드를 실행하지 않고 `actionRequired`로 종료 | `app/graph/nodes/n_candidate_activity_decider.py` |
-| Candidate Place Search | 활동별 검색어로 Kakao Local API 호출, 중복/제외 필터링 | 비-LLM. 활동별 상위 N개만 남김 | `app/graph/nodes/l_candidate_place_search.py` |
-| Candidate Place Verifier | 후보 장소별 영업시간·휴무일을 실제 확정 시각 기준으로 검증 (병렬) | `PASS/FAIL/UNKNOWN` 3-state 유지 — `UNKNOWN`을 임의로 통과/탈락 처리하지 않음 | `app/graph/nodes/n_candidate_place_verifier.py` |
-| Candidate Ranker | 검증 통과 후보 중 최대 3개를 골라 순위·추천 사유 생성 | `AVAILABLE_AT_MEETING_TIME` 태그 등 사실 판정 값은 LLM이 아니라 코드가 검증 결과에서 파생 | `app/graph/nodes/n_candidate_ranker.py` |
+| Candidate Activity Decider | 목적·참여자 선호·과거 모임 요약을 종합해 내부 `SearchPlan` 1~4개·태그·요약 생성 | 계획을 `MEETING_PURPOSE → PARTICIPANT_PREFERENCE → MEETING_MEMORY` 순으로 정렬해 중복 장소의 목적 provenance를 우선하며, 같은 축의 상반된 태그는 서버가 거부 | `app/graph/nodes/n_candidate_activity_decider.py` |
+| Candidate Place Search | `SearchPlan`별 검색어로 Kakao Local API를 병렬 호출하고 중복·이미 노출된 장소 제외 | 비-LLM. 계획 안에서는 query별, 전체에서는 계획별 round-robin을 적용해 계획당 최대 5개·전체 최대 15개 | `app/graph/nodes/l_candidate_place_search.py` |
+| Candidate Context/Fairness Pre-Ranker | 모든 Kakao 후보의 모임 목적 적합도와 참여자별 선호 관계를 판정한 뒤 공정성 점수로 영업 검증 순서 결정 | 후보를 5개씩 최대 3 batch로 나눠 병렬 평가. `contextRelation=NONE` hard gate 뒤 Python이 `Score → F → S → contextRelation → Kakao 순서`로 정렬 | `app/graph/nodes/n_candidate_ranker.py` |
+| Candidate Place Verifier | 사전랭킹 상위 6개를 병렬 검증하고 usable 후보 3개 확보·후보 소진·deadline 중 하나까지 다음 3개씩 반복 | `PASS/UNKNOWN`은 usable, `FAIL`은 제외. 모든 batch가 하나의 20초 예산을 공유하며 timeout은 `UNKNOWN`으로 보존 | `app/graph/nodes/n_candidate_place_verifier.py` |
+| Candidate Suggestion Builder | 검증한 usable 후보를 사전랭킹 순서대로 최대 3개 선택해 기존 `Suggestion` DTO로 조립 | 비-LLM. `PASS` 사실 필드를 코드로 파생하고 Kakao URL이 비어 있으면 검증된 place ID로 URL을 만들어 `sourceUrls`를 보장 | `app/graph/nodes/l_candidate_suggestion_builder.py` |
 
 ### 설계 원칙
 
 - **LLM은 판단, 코드는 계산.** 날짜 교집합·시간 슬롯·태그의 사실 판정처럼 정답이 하나로 정해지는 값은 전부 결정론적 코드가 만든다. LLM은 "왜 이 후보가 적합한가" 같은 자연어 판단·설명에만 관여한다.
+- **목적 적합성은 점수로 타협하지 않는다.** `contextRelation=NONE`인 후보는 공정성 수식에 가중치로 섞지 않고 영업 검증 전에 제외한다. 명시적 모임 목적을 만족한 후보 안에서만 참여자 공정성을 비교한다.
+- **비싼 외부 검증은 우선순위 후에 선별 실행한다.** Kakao 후보 최대 15개를 먼저 사전랭킹하고 상위 6개부터 영업 검증한다. usable 후보가 3개보다 적을 때만 다음 3개씩 확장하며, 후보 소진 또는 공통 20초 deadline에서 멈춘다.
 - **허용값은 서버가 최종 통제한다.** 날짜처럼 작은 후보 집합은 동적 `Literal`로 제한한다. Vocabulary는 전체 code(현재 seed 320개)를 enum으로 만들지 않고 `string | null`로 받은 뒤 실제 사전에 없는 값을 서버가 `UNMAPPED`와 `null`로 바꾼다.
 - **자유형 입력은 먼저 범위를 확인한다.** 개인 선호와 모임 목적 채팅은 공통적으로 `IN_SCOPE / OUT_OF_SCOPE`를 판별하고, 범위 밖 입력에는 잡담을 이어가지 않고 화면 목적에 맞는 고정 안내를 반환한다.
 - **AI는 상태를 저장하지 않는다.** 대화 이력, 이전에 보여준 장소 목록 등 이전 호출의 맥락이 필요한 값은 Back이 매 요청마다 통째로 다시 보낸다.

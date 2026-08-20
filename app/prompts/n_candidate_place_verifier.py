@@ -10,9 +10,11 @@ CLASSIFY_SYSTEM_PROMPT = """아래는 특정 장소의 영업시간/휴무일에
 - 정보가 부족하거나 검색 결과가 불명확하면 status는 UNKNOWN
 UNKNOWN을 PASS나 FAIL로 임의로 단정하지 마세요. 날짜만 확인되고 시간대를 알 수 없으면 UNKNOWN입니다.
 
-- businessHours: 확인된 영업시간을 사용자에게 보여줄 짧은 문구로 (예: "매일 11:30~22:00").
+- business_hours: 확인된 영업시간을 사용자에게 보여줄 짧은 문구로 (예: "매일 11:30~22:00").
   확인하지 못했으면 null. 검색 결과에 없는 시간을 지어내지 마세요.
-- source: 검색 결과에서 언급된 출처 URL. 없으면 null
+- source: 검색 결과에 실제로 포함된 출처 URL을 정확히 복사하세요. 없으면 null입니다.
+- PASS에는 business_hours와 source가 모두 필요합니다. 둘 중 하나라도 확인할 수 없으면 UNKNOWN입니다.
+- FAIL에는 source가 필요합니다. 휴무·폐업·영업시간 밖이라는 근거 URL이 없으면 UNKNOWN입니다.
 
 ## 검색 결과
 {search_result}

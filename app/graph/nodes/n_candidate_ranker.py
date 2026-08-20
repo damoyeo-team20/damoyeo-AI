@@ -1,18 +1,14 @@
-"""Candidate Fairness Ranker & Explainer.
+"""Candidate Context/Fairness Pre-Ranker & Explainer.
 
-검증을 통과한(또는 UNKNOWN인) 모든 후보에 대해 LLM은 장소와 참여자별 선호의 의미 관계 및
+Kakao에서 넓게 모은 모든 후보에 대해 LLM은 모임 목적 적합도와 참여자별 선호의 의미 관계,
 후보별 설명만 구조화해 반환한다. LLM이 후보 순서나 공정성 숫자를 정하지 않는다.
 
-서버 코드는 의미 관계에서 개인 만족도 ``u_i(c)``를 계산하고, 평균 만족도 ``S(c)``와 최저
-만족도 ``F(c)``를 ``100 * (0.7*S + 0.3*F)``로 집계해 최대 3개 순서를 고정한다.
-
-사실 판정에 해당하는 값도 코드가 붙인다:
-  - AVAILABLE_AT_MEETING_TIME 태그와 openAtMeetingTime: Place Verifier 결과에서 파생
-  - matchedPreferenceDomains: 실제로 기여한 입력 Vocabulary code를 domain으로 변환
-  - proposedStartAt/EndAt: 요청의 confirmedSlot을 그대로 사용
+서버는 모임 목적과 관련 없는 후보와 알레르기 충돌 후보를 먼저 제외하고, 개인 만족도 ``u_i(c)``,
+평균 ``S(c)``, 최저 ``F(c)``, ``100 * (0.7*S + 0.3*F)``를 계산해 영업 검증 순서를 고정한다.
 """
 
-import logging
+import asyncio
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -25,29 +21,32 @@ from app.graph.fairness import (
     PreferenceRelation,
     calculate_candidate_fairness,
 )
-from app.graph.state import CandidatesState, VerifiedPlace
+from app.graph.state import CandidatesState, PlaceCandidate, RankedCandidate
 from app.prompts.n_candidate_ranker import SYSTEM_PROMPT
-from app.schemas.candidates import (
-    CandidateTag,
-    ParticipantInput,
-    PlaceProvider,
-    Suggestion,
-    to_candidate_tag,
-)
-from app.services.vocabulary_client import fetch_vocabulary
+from app.schemas.candidates import CandidateTag, ParticipantInput
 
-logger = logging.getLogger(__name__)
+_EVALUATION_BATCH_SIZE = 5
 
-_MAX_SUGGESTIONS = 3
 
-_PASS = "PASS"
-_FAIL = "FAIL"
+class ContextRelation(str, Enum):
+    """후보가 이번 모임의 명시적 목적에 얼마나 부합하는지 나타내는 제한된 판정."""
+
+    DIRECT = "DIRECT"
+    PARTIAL = "PARTIAL"
+    NONE = "NONE"
+
+
+_CONTEXT_TIE_BREAK: dict[ContextRelation, int] = {
+    ContextRelation.DIRECT: 0,
+    ContextRelation.PARTIAL: 1,
+    ContextRelation.NONE: 2,
+}
 
 # AVAILABLE_AT_MEETING_TIME은 영업 검증 결과에서 파생되는 사실이므로 LLM 선택지에서 제외한다.
 _LLM_SELECTABLE_TAGS = [
-    t for t in CandidateTag if t is not CandidateTag.AVAILABLE_AT_MEETING_TIME
+    tag for tag in CandidateTag if tag is not CandidateTag.AVAILABLE_AT_MEETING_TIME
 ]
-_LLMCandidateTag = Literal[tuple(t.value for t in _LLM_SELECTABLE_TAGS)]  # type: ignore[valid-type]
+_LLMCandidateTag = Literal[tuple(tag.value for tag in _LLM_SELECTABLE_TAGS)]  # type: ignore[valid-type]
 
 
 class _PreferenceEvaluation(BaseModel):
@@ -62,6 +61,7 @@ class _CandidateEvaluation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kakao_place_id: str
+    context_relation: ContextRelation
     preference_relations: list[_PreferenceEvaluation] = Field(default_factory=list)
     reasons: list[str] = Field(min_length=1, max_length=3)
     # AVAILABLE_AT_MEETING_TIME은 여기에 없다. 영업 검증 PASS일 때 서버가 붙인다.
@@ -74,20 +74,18 @@ class _EvaluationResult(BaseModel):
     evaluations: list[_CandidateEvaluation] = Field(default_factory=list)
 
 
-def _eligible(places: list[VerifiedPlace]) -> list[VerifiedPlace]:
-    return [p for p in places if p["verification_status"] != _FAIL]
-
-
 def _ranking_key(
     fairness: CandidateFairnessScore,
+    context_relation: ContextRelation,
     original_index: int,
-) -> tuple[float, float, float, int]:
-    """높은 Score → F → S, 마지막으로 빠른 Kakao 입력 순서를 우선한다."""
+) -> tuple[float, float, float, int, int]:
+    """높은 Score → F → S → 컨텍스트 직접성 → 원래 Kakao 순서를 우선한다."""
 
     return (
         -fairness.score,
         -fairness.minimum_satisfaction,
         -fairness.group_satisfaction,
+        _CONTEXT_TIE_BREAK[context_relation],
         original_index,
     )
 
@@ -103,7 +101,7 @@ def _invalid_model_result(message: str) -> AIServiceError:
 
 def _validate_evaluations(
     result: _EvaluationResult,
-    places: list[VerifiedPlace],
+    places: list[PlaceCandidate],
     participants: list[ParticipantInput],
 ) -> dict[str, tuple[_CandidateEvaluation, dict[tuple[int, str], PreferenceRelation]]]:
     """모델이 입력 후보·참여자·선호를 빠짐없이 그대로 참조했는지 검증한다."""
@@ -141,52 +139,40 @@ def _validate_evaluations(
     return validated
 
 
-async def _domains_by_code(codes: set[str]) -> dict[str, str]:
-    """Vocabulary 조회 실패로 후보 생성 전체를 실패시키지 않는다. domain만 비워서 진행한다."""
-
-    if not codes:
-        return {}
-    try:
-        vocabulary = await fetch_vocabulary()
-    except AIServiceError:
-        logger.warning("랭킹 중 Vocabulary 조회 실패 — matchedPreferenceDomains 없이 진행")
-        return {}
-    return {entry.code: entry.domain for entry in vocabulary if entry.code in codes}
-
-
-async def rank_and_explain(state: CandidatesState) -> dict:
-    eligible = _eligible(state.get("verified_places", []))
-    if not eligible:
-        return {"suggestions": []}
-
-    participants = state.get("participants", [])
-    if not participants:
-        raise _invalid_model_result("공정성 계산에 필요한 참여자 정보가 없습니다.")
-
-    # Activity Decider가 활동 유형별로 남긴 집단 수준 사유를 참고 맥락으로 함께 전달한다.
-    activity_rationales = {a["activity"]: a["rationale_group"] for a in state.get("activities", [])}
+async def _evaluate_candidate_batch(
+    *,
+    purpose: str,
+    participants: list[ParticipantInput],
+    places: list[PlaceCandidate],
+) -> _EvaluationResult:
+    """구조화 출력 크기를 제한하기 위해 후보를 최대 5개씩 독립 평가한다."""
 
     llm = get_llm().with_structured_output(_EvaluationResult, include_raw=True)
     system = SYSTEM_PROMPT.format(
-        purpose=state["meeting"].purpose,
-        participants=[p.model_dump(by_alias=True) for p in participants],
-        verified_places=[
+        purpose=purpose,
+        participants=[
+            participant.model_dump(by_alias=True) for participant in participants
+        ],
+        place_candidates=[
             {
-                "kakaoPlaceId": p["kakao_place_id"],
-                "activity": p["activity"],
-                "activityRationale": activity_rationales.get(p["activity"]),
-                "name": p["name"],
-                "category": p["category"],
-                "verificationStatus": p["verification_status"],
+                "kakaoPlaceId": place["kakao_place_id"],
+                "searchPlan": place["search_plan_label"],
+                "searchPlanSource": place["search_plan_source"],
+                "searchPlanRationale": place["search_plan_rationale"],
+                "name": place["name"],
+                "category": place["category"],
             }
-            for p in eligible
+            for place in places
         ],
     )
     try:
         structured_result = await llm.ainvoke(
             [
                 {"role": "system", "content": system},
-                {"role": "user", "content": "모든 후보와 참여자별 선호 관계를 평가해줘."},
+                {
+                    "role": "user",
+                    "content": "이 batch의 모든 후보에 대해 모임 목적 적합도와 참여자별 선호 관계를 평가해줘.",
+                },
             ]
         )
     except ValidationError as exc:
@@ -203,85 +189,108 @@ async def rank_and_explain(state: CandidatesState) -> dict:
             raise error from parsing_error
         raise error
 
-    validated = _validate_evaluations(result, eligible, participants)
+    # batch마다 먼저 완전성을 확인해 한 batch의 누락이 전체 merge 뒤에 가려지지 않게 한다.
+    _validate_evaluations(result, places, participants)
+    return result
+
+
+async def rank_and_explain(state: CandidatesState) -> dict:
+    """모든 Kakao 후보를 평가해 영업 검증 우선순서와 표현 정보를 만든다."""
+
+    places = state.get("place_candidates", [])
+    if not places:
+        return {"ranked_candidates": []}
+
+    participants = state.get("participants", [])
+    if not participants:
+        raise _invalid_model_result("공정성 계산에 필요한 참여자 정보가 없습니다.")
+
+    batches = [
+        places[index : index + _EVALUATION_BATCH_SIZE]
+        for index in range(0, len(places), _EVALUATION_BATCH_SIZE)
+    ]
+    batch_results = await asyncio.gather(
+        *(
+            _evaluate_candidate_batch(
+                purpose=state["meeting"].purpose,
+                participants=participants,
+                places=batch,
+            )
+            for batch in batches
+        )
+    )
+    result = _EvaluationResult(
+        evaluations=[
+            evaluation
+            for batch_result in batch_results
+            for evaluation in batch_result.evaluations
+        ]
+    )
+
+    validated = _validate_evaluations(result, places, participants)
 
     scored: list[
-        tuple[CandidateFairnessScore, int, VerifiedPlace, _CandidateEvaluation]
+        tuple[
+            CandidateFairnessScore,
+            ContextRelation,
+            int,
+            PlaceCandidate,
+            _CandidateEvaluation,
+        ]
     ] = []
-    for original_index, place in enumerate(eligible):
+    context_rejected = 0
+    allergy_vetoed = 0
+    for original_index, place in enumerate(places):
         evaluation, relations = validated[place["kakao_place_id"]]
-        fairness = calculate_candidate_fairness(participants, relations)
-        if not fairness.vetoed:
-            scored.append((fairness, original_index, place, evaluation))
+        if evaluation.context_relation is ContextRelation.NONE:
+            context_rejected += 1
+            continue
+        fairness = calculate_candidate_fairness(
+            participants,
+            relations,
+            candidate_id=place["kakao_place_id"],
+        )
+        if fairness.vetoed:
+            allergy_vetoed += 1
+            continue
+        scored.append(
+            (fairness, evaluation.context_relation, original_index, place, evaluation)
+        )
 
-    # 같은 최종 점수에서는 최저 만족도, 평균 만족도, Kakao 원래 순서를 차례로 본다.
-    scored.sort(key=lambda item: _ranking_key(item[0], item[1]))
-    selected = scored[:_MAX_SUGGESTIONS]
-
-    matched_codes = {
-        code for fairness, _, _, _ in selected for code in fairness.matched_preference_codes
-    }
-    domain_by_code = await _domains_by_code(matched_codes)
+    scored.sort(key=lambda item: _ranking_key(item[0], item[1], item[2]))
+    ranked_candidates: list[RankedCandidate] = [
+        {
+            "place": place,
+            "context_relation": context_relation.value,
+            "participant_satisfaction": fairness.participant_satisfaction,
+            "group_satisfaction": fairness.group_satisfaction,
+            "minimum_satisfaction": fairness.minimum_satisfaction,
+            "fairness_score": fairness.score,
+            "matched_preference_codes": list(fairness.matched_preference_codes),
+            "reasons": evaluation.reasons,
+            "tags": list(evaluation.tags),
+            "original_index": original_index,
+        }
+        for fairness, context_relation, original_index, place, evaluation in scored
+    ]
 
     record_debug(  # TEMP DEBUG
         "n_candidate_ranker",
         {
             "evaluation": result.model_dump(),
-            "scores": [
+            "contextRejectedCount": context_rejected,
+            "allergyVetoedCount": allergy_vetoed,
+            "rankedScores": [
                 {
-                    "kakaoPlaceId": place["kakao_place_id"],
-                    "participantSatisfaction": fairness.participant_satisfaction,
-                    "S": fairness.group_satisfaction,
-                    "F": fairness.minimum_satisfaction,
-                    "score": fairness.score,
+                    "kakaoPlaceId": candidate["place"]["kakao_place_id"],
+                    "contextRelation": candidate["context_relation"],
+                    "participantSatisfaction": candidate["participant_satisfaction"],
+                    "S": candidate["group_satisfaction"],
+                    "F": candidate["minimum_satisfaction"],
+                    "score": candidate["fairness_score"],
                 }
-                for fairness, _, place, _ in selected
+                for candidate in ranked_candidates
             ],
         },
     )
-
-    confirmed_slot = state["confirmed_slot"]
-    start_at = confirmed_slot.confirmed_start_at
-    end_at = confirmed_slot.confirmed_end_at
-
-    suggestions: list[Suggestion] = []
-    for fairness, _, place, evaluation in selected:
-        verified = place["verification_status"] == _PASS
-        tag_codes = [CandidateTag(t) for t in dict.fromkeys(evaluation.tags)]
-        if verified:
-            tag_codes.append(CandidateTag.AVAILABLE_AT_MEETING_TIME)
-
-        domains = [
-            domain_by_code[code]
-            for code in fairness.matched_preference_codes
-            if code in domain_by_code
-        ]
-        source_urls = [
-            url for url in dict.fromkeys([place["place_url"], place["verification_source"]]) if url
-        ]
-
-        suggestions.append(
-            Suggestion(
-                rank=len(suggestions) + 1,
-                category=place["category"],
-                place_provider=PlaceProvider.KAKAO,
-                external_place_id=place["kakao_place_id"],
-                name=place["name"],
-                address=place["address"],
-                latitude=place["latitude"],
-                longitude=place["longitude"],
-                external_url=place["place_url"],
-                proposed_start_at=start_at,
-                proposed_end_at=end_at,
-                business_hours=place["business_hours"],
-                business_hours_verified=verified,
-                open_at_meeting_time=True if verified else None,
-                matched_preference_domains=list(dict.fromkeys(domains)),
-                reasons=evaluation.reasons,
-                tags=[to_candidate_tag(t) for t in tag_codes],
-                source_urls=source_urls,
-                checked_at=place["checked_at"],
-            )
-        )
-
-    return {"suggestions": suggestions}
+    return {"ranked_candidates": ranked_candidates}

@@ -9,7 +9,9 @@ LLM은 장소와 선호의 의미 관계만 ``DIRECT / PARTIAL / NONE``으로 �
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Mapping
+from typing import Any, Mapping
+
+from langsmith import traceable
 
 from app.schemas.candidates import ParticipantInput
 from app.schemas.preference import Sentiment, Strength
@@ -75,14 +77,72 @@ def calculate_group_fairness(satisfaction_values: list[float]) -> GroupFairnessS
     )
 
 
+def _trace_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    """LangSmith에 공정성 계산 근거만 읽기 쉬운 형태로 남긴다."""
+
+    participants: list[ParticipantInput] = inputs["participants"]
+    relations: Mapping[tuple[int, str], PreferenceRelation] = inputs["relations"]
+    return {
+        "kakaoPlaceId": inputs.get("candidate_id"),
+        "participants": [
+            {
+                "userId": participant.user_id,
+                "preferences": [
+                    {
+                        "vocabularyCode": preference.vocabulary_code,
+                        "sentiment": preference.sentiment.value,
+                        "strength": preference.strength.value,
+                    }
+                    for preference in participant.preferences
+                ],
+            }
+            for participant in participants
+        ],
+        "preferenceRelations": [
+            {
+                "userId": user_id,
+                "vocabularyCode": vocabulary_code,
+                "relation": relation.value,
+            }
+            for (user_id, vocabulary_code), relation in sorted(relations.items())
+        ],
+    }
+
+
+def _trace_output(result: CandidateFairnessScore) -> dict[str, Any]:
+    """API에는 노출하지 않는 내부 점수만 LangSmith 출력으로 직렬화한다."""
+
+    return {
+        "participantSatisfaction": [
+            {"userId": user_id, "value": satisfaction}
+            for user_id, satisfaction in result.participant_satisfaction.items()
+        ],
+        "S": result.group_satisfaction,
+        "F": result.minimum_satisfaction,
+        "score": result.score,
+        "vetoed": result.vetoed,
+        "matchedPreferenceCodes": list(result.matched_preference_codes),
+    }
+
+
+@traceable(
+    name="fairness_score",
+    run_type="chain",
+    tags=["fairness", "deterministic"],
+    process_inputs=_trace_inputs,
+    process_outputs=_trace_output,
+)
 def calculate_candidate_fairness(
     participants: list[ParticipantInput],
     relations: Mapping[tuple[int, str], PreferenceRelation],
+    *,
+    candidate_id: str | None = None,
 ) -> CandidateFairnessScore:
     """후보 하나의 ``u_i(c)``, ``S(c)``, ``F(c)``와 최종 점수를 계산한다.
 
     ``relations``에는 각 ``(userId, vocabularyCode)`` 쌍이 반드시 있어야 한다. 모델 출력의
-    완전성·ID 실존 여부는 호출부가 먼저 검증한다.
+    완전성·ID 실존 여부는 호출부가 먼저 검증한다. ``candidate_id``는 계산에는 쓰지 않고
+    LangSmith에서 후보별 계산 trace를 구분하는 용도로만 사용한다.
 
     알레르기 코드는 안전 조건이므로 후보와 DIRECT 관계일 때 점수 경쟁 전에 veto한다. 최신
     제품 결정에 따라 일반 ``STRONG + NEGATIVE``는 veto하지 않고 만족도 0까지 내려갈 수 있다.
