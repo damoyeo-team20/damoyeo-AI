@@ -25,6 +25,8 @@ async def search_places(keyword: str, region: str, size: int = 5) -> list[KakaoP
             code="KAKAO_API_KEY_MISSING",
             message="KAKAO_REST_API_KEY가 설정되어 있지 않습니다.",
             status_code=500,
+            # 설정 문제라 같은 요청을 재시도해도 결과가 바뀌지 않는다.
+            retryable=False,
         )
 
     headers = {"Authorization": f"KakaoAK {settings.kakao_rest_api_key}"}
@@ -35,8 +37,13 @@ async def search_places(keyword: str, region: str, size: int = 5) -> list[KakaoP
             response = await client.get(_SEARCH_URL, headers=headers, params=params)
             response.raise_for_status()
         except httpx.HTTPError as exc:
+            # docs/api-design2-backend.md 6장의 PLACE_PROVIDER_ERROR(502)에 대응.
+            # 우리는 Kakao 하나만 쓰지만 문서는 장소 제공자 실패를 이 code로 통칭한다.
             raise AIServiceError(
-                code="KAKAO_API_ERROR", message=f"Kakao Local API 호출 실패: {exc}", status_code=502
+                code="PLACE_PROVIDER_ERROR",
+                message=f"Kakao Local API 호출 실패: {exc}",
+                status_code=502,
+                retryable=True,
             ) from exc
 
     documents = response.json().get("documents", [])

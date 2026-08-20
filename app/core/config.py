@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Backend (Vocabulary API 등)
     backend_api_base_url: str = "http://localhost:8080"
 
+    # DB (AI 서비스가 직접 소유하는 preference_vocabulary 등)
+    database_url: str = "postgresql+asyncpg://localhost:5432/damoyeo_ai"
+
     # LangSmith
     langsmith_tracing: bool = False
     langsmith_api_key: str = ""

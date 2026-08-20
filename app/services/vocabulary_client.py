@@ -1,28 +1,18 @@
 """Back이 호스팅하는 `GET /internal/preference-vocabulary` 클라이언트.
 
 AI 서버 기동 시 1회 호출해 인메모리에 캐싱한다 (ai-part-proposal.md 6장 기준).
+
+DB를 AI 서비스가 직접 소유하는 안(SQLAlchemy 직접 조회)이 로컬에서 테스트되고 있지만
+아직 팀 확정 사항이 아니다 — 소유권 이전이 아니라 테스트 단계이므로 이 클라이언트는
+계속 Back의 HTTP 엔드포인트를 호출한다. `app/core/database.py`, `app/models/vocabulary.py`
+등 DB 인프라는 결정이 나올 때까지 리포지토리에 남겨두되 여기서는 쓰지 않는다.
 """
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import get_settings
 from app.core.errors import AIServiceError
-
-
-class VocabularyEntry(BaseModel):
-    """`preference_vocabulary` 테이블 1행에 대응 (docs/db_schema.md).
-
-    스키마에 `attribute` 컬럼은 없다. 계층은 `parent_code` 하나로만 표현한다.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    code: str
-    domain: str
-    display_name: str = Field(alias="displayName")
-    parent_code: str | None = Field(default=None, alias="parentCode")
-
+from app.schemas.vocabulary import VocabularyEntry
 
 _cache: list[VocabularyEntry] | None = None
 
@@ -45,6 +35,7 @@ async def fetch_vocabulary(force_refresh: bool = False) -> list[VocabularyEntry]
             code="VOCABULARY_UNAVAILABLE",
             message=f"Vocabulary 조회 실패: {exc}",
             status_code=503,
+            retryable=True,
         ) from exc
 
     _cache = [VocabularyEntry.model_validate(item) for item in payload["vocabulary"]]
