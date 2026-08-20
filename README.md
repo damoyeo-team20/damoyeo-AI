@@ -33,6 +33,30 @@
 
 **서비스 범위**: 식사 중심 모임만 지원합니다 (회식/브런치/술자리). 다른 모임 유형(PC방, 배드민턴 등)은 고려사항이 급증해 이번 범위에서 제외했습니다.
 
+## 서비스 흐름
+
+```text
+회원가입 및 개인 선호 입력
+        ↓
+모임 그룹 생성 또는 참여
+        ↓
+새 모임 생성 및 참여자 초대
+        ↓
+참여자별 가능 날짜 제출
+        ↓
+주최자가 AI와 모임 목적 대화
+        ↓
+Back이 전원 가능 날짜 계산
+        ↓
+AI가 날짜·시간 확정
+        ↓
+AI가 장소 검색·검증·랭킹
+        ↓
+최종 장소 후보 최대 3개 제시
+        ↓
+주최자가 후보 선택 및 모임 확정
+```
+
 ## 아키텍처
 
 ### 시스템 구조
@@ -93,17 +117,19 @@ flowchart TD
 
     subgraph EP1["POST /ai/preferences/extract"]
         direction TB
-        A1["Router\n발화 분리"]:::llm
-        A1 -->|선호 텍스트| A2["Preference Extractor\nVocabulary 코드 매핑"]:::llm
-        A1 -->|잡담 텍스트| A3["Smalltalk Handler"]:::llm
-        A1 -->|선호만 있음| A4["고정 완료 문구"]:::code
+        A1["Scope Router\n입력 범위 판별"]:::llm
+        A1 -->|IN_SCOPE| A2["Preference Extractor\nVocabulary 코드 매핑"]:::llm
+        A1 -->|OUT_OF_SCOPE| A3["Preference Guardrail\n선호 입력 안내"]:::code
+        A2 -->|추출 성공| A4["고정 완료 문구"]:::code
+        A2 -->|추출 없음| A3
     end
 
     subgraph EP2["POST /ai/meetings/{meetingId}/context/messages"]
         direction TB
-        B1["Router\n날짜 변경 의사 분류"]:::llm
-        B1 -->|일반 대화| B2["Context Parser\n대화형 응답 생성"]:::llm
-        B1 -->|날짜 변경 의사| B3["Date Reselector\n후보 중 재선택"]:::llm
+        B1["Scope Router\n입력 범위 판별"]:::llm
+        B1 -->|IN_SCOPE| B2["Context Parser\n대화형 응답 생성"]:::llm
+        B1 -->|DATE_CHANGE| B3["Date Reselector\n후보 중 재선택"]:::llm
+        B1 -->|OUT_OF_SCOPE| B4["Context Guardrail\n목적 입력 안내"]:::code
     end
 
     subgraph EP3["POST /ai/meetings/{meetingId}/context"]
@@ -129,10 +155,11 @@ flowchart TD
 
 | 노드 | 역할 | 비고 | 파일 |
 | --- | --- | --- | --- |
-| Preference Router | 발화를 "선호 관련"과 "잡담"으로 분리 | 자체 추출/응답 없이 팬아웃만 담당 | `app/graph/nodes/n_preference_router.py` |
-| Preference Extractor | 선호 텍스트를 Vocabulary 코드로 매핑 | 응답 스키마의 `vocabulary_code`를 실제 Vocabulary 목록으로 `Literal` 제약 — 없는 코드는 `UNMAPPED`(`null`)로만 나올 수 있음 | `app/graph/nodes/n_preference_extractor.py` |
-| Preference Smalltalk | 잡담에 반응하며 어떤 선호를 말하면 되는지 구체적으로 유도 | 실제 등록된 Vocabulary 표시 이름을 예시로 제시 | `app/graph/nodes/n_preference_smalltalk.py` |
-| Context Router | 발화가 "날짜 변경 의사"인지 분류 | `candidateDates`가 요청에 없으면(스케줄 확정 전) LLM 호출 자체를 생략 | `app/graph/nodes/n_context_router.py` |
+| Preference Scope Router | 개인 선호 입력 범위인지 `IN_SCOPE / OUT_OF_SCOPE`로 분류 | 자체 추출·응답 없이 분기만 담당 | `app/graph/nodes/n_preference_router.py` |
+| Preference Extractor | `IN_SCOPE` 입력에서 개인 선호를 Vocabulary 코드로 매핑 | 응답 스키마의 `vocabulary_code`를 실제 Vocabulary 목록으로 `Literal` 제약 — 없는 코드는 `UNMAPPED`(`null`)로만 나올 수 있음 | `app/graph/nodes/n_preference_extractor.py` |
+| Preference Guardrail | `OUT_OF_SCOPE` 또는 추출 결과가 없는 입력을 개인 선호 입력으로 다시 유도 | LLM 없이 고정 안내 반환 | `app/graph/nodes/l_preference_guardrail.py` |
+| Context Scope Router | 발화를 `IN_SCOPE / OUT_OF_SCOPE / DATE_CHANGE`로 분류 | `DATE_CHANGE`는 `candidateDates`가 있을 때만 출력 가능 | `app/graph/nodes/n_context_router.py` |
+| Context Guardrail | 모임 목적 범위 밖 입력을 목적·분위기·활동 입력으로 다시 유도 | LLM 없이 고정 안내를 반환하고 날짜 후보는 그대로 보존 | `app/graph/nodes/l_context_guardrail.py` |
 | Context Parser | 목적 채팅 한 턴 응대 / 전체 대화 최종 요약(`purpose`) | 지역·날짜·시간대는 이 대화에서 다루지 않음 | `app/graph/nodes/n_context_parser.py` |
 | Context Date Reselector | 확정 날짜를 후보 목록 중 하나로 재선택 | 어떤 날짜인지 불명확하면 바꾸지 않고 되물음. 후보 밖 날짜는 스키마로 원천 차단 | `app/graph/nodes/n_context_date_reselector.py` |
 | Schedule Resolver | Back이 계산한 전원 가능 날짜 중 하루를 선택 + 이유 생성 | 고를 수 있는 날짜를 응답 스키마에서 `Literal`로 제약 | `app/graph/nodes/n_schedule_resolver.py` |
@@ -146,6 +173,7 @@ flowchart TD
 
 - **LLM은 판단, 코드는 계산.** 날짜 교집합·시간 슬롯·태그의 사실 판정처럼 정답이 하나로 정해지는 값은 전부 결정론적 코드가 만든다. LLM은 "왜 이 후보가 적합한가" 같은 자연어 판단·설명에만 관여한다.
 - **환각 원천 차단.** LLM이 고를 수 있는 값(날짜, Vocabulary 코드 등)을 매 요청마다 동적으로 만든 `Literal` 타입으로 응답 스키마 자체에 박아 넣는다 — 목록 밖의 값은 파싱 단계에서부터 나올 수 없다.
+- **자유형 입력은 먼저 범위를 확인한다.** 개인 선호와 모임 목적 채팅은 공통적으로 `IN_SCOPE / OUT_OF_SCOPE`를 판별하고, 범위 밖 입력에는 잡담을 이어가지 않고 화면 목적에 맞는 고정 안내를 반환한다.
 - **AI는 상태를 저장하지 않는다.** 대화 이력, 이전에 보여준 장소 목록 등 이전 호출의 맥락이 필요한 값은 Back이 매 요청마다 통째로 다시 보낸다.
 - **전용 재생성 API 없음.** "재생성"은 제품 흐름상 "뒤로가기"로 단순화됐다 — Back이 `/context/messages`로 되돌아가 다시 대화하고 `/context` → `/schedule` → `/candidates`를 다시 호출한다.
 
@@ -245,34 +273,7 @@ Agent는 Vocabulary에 없는 새로운 code를 절대 임의로 생성하지 �
 
 ## 트러블슈팅
 
-개발·배포 과정에서 실제로 겪고 해결한 문제들입니다.
-
-### 인프라 · 배포
-
-1. **이미지 아키텍처 불일치 (`no matching manifest for linux/arm64/v8`)** — Mac(arm64)에서 backend 이미지를 pull하지 못함. 해당 이미지가 `amd64`로만 빌드돼 있었던 게 원인. 같은 문제를 반복하지 않도록 이 저장소의 이미지는 처음부터 GitHub Actions에서 `amd64`/`arm64` 멀티 아키텍처로 빌드하도록 구성.
-2. **EC2 `docker compose build requires buildx 0.17.0 or later`** — EC2에 설치된 buildx가 구버전. GitHub Releases의 `latest/download/` 별칭 URL로 받으면 실제 파일명과 안 맞아 9바이트짜리 에러 페이지만 받아짐 → Releases API로 정확한 버전 파일명(`buildx-v0.36.1.linux-amd64`)을 조회해 직접 받는 방식으로 해결.
-3. **`docker compose down --remove-orphans`가 컨테이너를 삭제** — 정지가 아니라 완전 삭제라는 걸 모르고 실행해 `backend`/`postgres` 컨테이너가 사라짐. `docker run`으로 임시 복구했다가, 실제 운영 백엔드(`api.damoyeo.kro.kr`)가 이미 별도 서버로 떠 있다는 걸 확인하고 로컬 컨테이너는 정리 대상으로 정리.
-4. **배포 스크립트가 파일을 엉뚱한 경로에 복사** — `scp file1 file2 user@host:~/app/`처럼 서로 다른 하위 경로의 파일 여러 개를 한 디렉터리로 복사하면 원래 경로 구조가 무시되고 flat하게 복사됨. 빌드는 성공했는데 버그가 그대로인 걸 보고 `grep`으로 배포된 파일 내용을 직접 확인해 발견 → 파일별로 목적지 전체 경로를 지정해서 재배포.
-5. **`host.docker.internal`이 예상과 다른 게이트웨이로 풀림** — 컨테이너 간 통신 실패를 DNS 문제로 의심(기본 브리지 게이트웨이 `172.17.0.1` vs 실제 네트워크 게이트웨이 `172.20.0.1`). `getent hosts`/`docker inspect`로 직접 확인한 결과 DNS는 정상이었고, 실제 원인은 3번 사고로 컨테이너 자체가 삭제된 것이었음 — 겉보기 증상만으로 원인을 단정하지 않고 직접 확인해 잘못된 진단을 피한 사례.
-
-### 인증 · 외부 연동
-
-6. **AI → Back 인증 완전 누락** — Vocabulary 조회가 계속 실패. `.env`의 `INTERNAL_API_KEY`가 플레이스홀더 값 그대로였고, 애초에 헤더 자체를 코드에서 안 보내고 있었음. 실제 키를 생성(`openssl rand -hex 32`)하고 `X-Internal-Api-Key` 헤더를 추가했으며, 헤더 이름은 Back 컨테이너에 직접 curl로 여러 개 테스트해 확정(다른 이름은 401, 이 이름만 200).
-7. **로컬 `BACKEND_API_BASE_URL`에 스킴 누락** — `httpx.UnsupportedProtocol` 에러. `.env`에 프로토콜 없이 IP만 적혀 있던 게 원인. `https://api.damoyeo.kro.kr`로 수정.
-8. **Kakao Local API 403** — Kakao Developers 콘솔에서 "카카오맵" 서비스가 활성화돼 있지 않았던 게 원인. 서비스 활성화 후 정상화.
-9. **Candidate Place Verifier에서 Gemini `google_search` 429** — 후보 생성 마지막 단계(영업시간 검증)에서 자주 할당량 초과. `google_search` grounding 도구 호출이 일반 텍스트 생성과 별도의, 더 빡빡한 할당량을 갖는다는 걸 A/B 테스트(도구 바인딩 호출 vs 순수 텍스트 호출 격리)로 확인. 테스트를 막지 않도록 `SKIP_BUSINESS_HOURS_VERIFICATION` 플래그로 임시 우회 — 할당량 자체는 아직 미해결.
-
-### 프로덕션 버그
-
-10. **`/schedule`에서 `OutputParserException`** — 날짜 선택 API가 실제 운영 트래픽에서 파싱 에러로 실패. 프롬프트가 후보 날짜를 `"2026-08-28 (Friday)"`처럼 요일을 붙여서 보여줬는데, 모델이 그 문자열 전체를 답으로 냈고 응답 스키마는 순수 ISO 날짜만 허용하는 `Literal`이라 거부됨. 요일 표기를 프롬프트에서 제거하고 "후보 목록과 정확히 같은 문자열이어야 한다"는 규칙을 명시해 해결.
-
-### 관측성(디버깅 기능) 관련
-
-임시 디버깅 기능(`# TEMP DEBUG` 태그, 정식 배포 전 제거 예정)을 만들면서 겪은 문제들입니다.
-
-11. **디버그 응답 설계를 두 번 갈아엎음** — 처음엔 새 최상위 키(`_debug`)를 응답에 추가하는 방식으로 구현했으나, Jackson처럼 엄격한 파서를 쓰는 백엔드가 모르는 필드를 만나면 파싱이 깨질 수 있다는 우려로 전면 재설계. 최종적으로 새 필드를 추가하지 않고 기존 `reply`/`reason`/`summary`/`message` 문자열 값 뒤에 `[DEBUG: ...]`를 그대로 이어붙이는 방식으로 바꾸고, 여러 엔드포인트에서 응답 키 구성이 이전과 100% 동일함을 직접 검증.
-12. **디버그 트레이스 기록이 테스트에서 크래시** — `record_debug`가 `AttributeError: 'SimpleNamespace' object has no attribute 'model_dump'`로 실패. 테스트가 LLM 응답을 `SimpleNamespace`로 스텁하는데 무조건 `.model_dump()`를 호출하고 있었던 게 원인. `hasattr` 체크 후 없으면 `repr()`로 폴백하도록 방어적으로 수정.
-13. **검증 에러 직렬화 실패** — 요청 검증 실패 응답에 상세 내용을 넣는 과정에서 `TypeError: Object of type ValueError is not JSON serializable`. Pydantic 검증 에러 중 일부가 `ValueError` 인스턴스를 그대로 담고 있던 게 원인. `json.dumps(..., default=str)`로 안전하게 직렬화해 해결.
+[`docs/troubleshooting.md`](docs/troubleshooting.md)
 
 ## 오픈 이슈
 

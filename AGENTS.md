@@ -18,13 +18,12 @@
 | 문서 | 역할 |
 | --- | --- |
 | `docs/api-design2-backend.md` | **Back↔AI 계약의 단일 기준 문서.** 요청/응답/에러코드가 다른 문서와 다르면 항상 이 문서가 맞다. 명세를 새로 쓰거나 고칠 땐 이 문서의 형식(엔드포인트별 Request/Response 예시 → 필드 표 → 규칙 → 에러 표)을 따른다. |
+| `docs/ai-pipeline-walkthrough.md` | Back↔AI 계약(wire format)이 아니라 **그 안쪽 — 각 노드가 정확히 어떤 필드를 받아 어떤 프롬프트/계산으로 무엇을 내는지**. 노드 로직이 바뀌면 이 문서도 같이 갱신한다. 요청/응답 JSON 필드는 여기 복제하지 않고 `api-design2-backend.md`를 링크한다. |
 | `docs/db_schema.md` | DB 스키마 확정본. 필드명·타입·enum 값의 최종 근거. |
 | `docs/ai-part-proposal.md` | AI 파트 전체 기획서. 파이프라인 구조·노드 역할·설계 배경. API 형태의 근거가 아니라 "왜 이런 파이프라인인가"의 배경용. |
 | `docs/backend-api-example.md` | 백엔드가 임시로 작성해준 Front↔Back API 예시. **참고만 한다 — 그대로 따르지 않는다.** |
 
-아래는 이미 최신 계약에 반영이 끝난 과거 산출물이다. 히스토리로만 남아 있고 현재 계약의 근거로 쓰지 않는다 — 내용이 최신 문서와 다르면 최신 문서가 맞다.
-
-`docs/api-spec.md`(화면 단위 명세 작업), `docs/api-design.md`(초기 API 초안), `docs/ai-pipeline-design.md`, `docs/backend-ai-contract.md`, `docs/service-proposal.md`, `docs/topic-development.md`(기획 단계 문서)
+과거 기획·초안 문서(화면 단위 명세 작업, 초기 API 초안, 기획 단계 설계·브레인스토밍)는 결론이 전부 위 문서들에 반영된 뒤 삭제했다.
 
 ## 판단 기준
 

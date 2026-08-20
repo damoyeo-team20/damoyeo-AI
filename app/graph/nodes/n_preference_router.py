@@ -1,8 +1,10 @@
-"""Preference Router.
+"""Preference Scope Router.
 
-발화를 "선호 관련 부분"과 "잡담 부분"으로 분리한다. 이후 두 노드(추출/스몰톡)로 팬아웃하기 위한
-전처리 노드 — 자체적으로 선호를 추출하거나 응답을 만들지 않는다.
+사용자 입력이 개인 선호 화면의 범위 안인지 판별한다. 선호를 직접 추출하거나 사용자 답변을
+만들지는 않는다.
 """
+
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -13,8 +15,7 @@ from app.prompts.n_preference_router import SYSTEM_PROMPT, USER_TEMPLATE
 
 
 class _RouteResult(BaseModel):
-    preference_text: str | None = None
-    smalltalk_text: str | None = None
+    route: Literal["IN_SCOPE", "OUT_OF_SCOPE"]
 
 
 async def route_message(state: PreferenceState) -> dict:
@@ -29,7 +30,4 @@ async def route_message(state: PreferenceState) -> dict:
     )
     record_debug("n_preference_router", result)  # TEMP DEBUG
 
-    return {
-        "preference_text": result.preference_text,
-        "smalltalk_text": result.smalltalk_text,
-    }
+    return {"route": result.route}

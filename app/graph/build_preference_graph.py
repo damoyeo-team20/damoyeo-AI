@@ -1,56 +1,52 @@
-"""`/ai/preferences/extract` 파이프라인(라우터 -> 추출/응답 팬아웃) LangGraph 조립.
+"""`/ai/preferences/extract` 파이프라인(범위 판별 -> 추출 또는 가드레일) 조립.
 
-라우터가 발화를 선호 부분/잡담 부분으로 나눈다. `assistant_reply`는 항상 채워지지만 경로가 다르다:
-- 잡담이 있으면: handle_smalltalk(LLM)이 실제로 반응하고 다음 발화를 유도한다.
-- 선호만 있으면: acknowledge_preferences_only가 LLM 없이 고정 문구로 완료만 통보한다.
+정상 선호 입력만 추출기로 보내고, 범위 밖 입력이나 추출 결과가 비어 있는 입력은 고정 가드레일
+안내로 되돌린다. 사용자와 불필요한 잡담을 이어가는 노드는 두지 않는다.
 """
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.graph.nodes.l_preference_guardrail import (
+    acknowledge_preferences,
+    guide_preference_input,
+)
 from app.graph.nodes.n_preference_router import route_message
 from app.graph.nodes.n_preference_extractor import extract_preferences_node
-from app.graph.nodes.n_preference_smalltalk import acknowledge_preferences_only, handle_smalltalk
 from app.graph.preference_state import PreferenceState
 
 
-def _route_after_split(state: PreferenceState) -> list[str]:
-    has_preference = bool(state.get("preference_text"))
-    has_smalltalk = bool(state.get("smalltalk_text"))
+def _route_after_scope_check(state: PreferenceState) -> str:
+    return "extract_preferences" if state.get("route") == "IN_SCOPE" else "guardrail"
 
-    targets = []
-    if has_preference:
-        targets.append("extract_preferences")
 
-    if has_smalltalk:
-        targets.append("handle_smalltalk")
-    elif has_preference:
-        targets.append("acknowledge_preferences_only")
-
-    # 라우터가 선호도 잡담도 못 찾은 극단적인 경우 — 폴백으로 잡담 취급.
-    return targets or ["handle_smalltalk"]
+def _route_after_extraction(state: PreferenceState) -> str:
+    return "acknowledge" if state.get("preferences") else "guardrail"
 
 
 def build_preference_graph() -> CompiledStateGraph:
     graph = StateGraph(PreferenceState)
     graph.add_node("route_message", route_message)
     graph.add_node("extract_preferences", extract_preferences_node)
-    graph.add_node("handle_smalltalk", handle_smalltalk)
-    graph.add_node("acknowledge_preferences_only", acknowledge_preferences_only)
+    graph.add_node("guardrail", guide_preference_input)
+    graph.add_node("acknowledge", acknowledge_preferences)
 
     graph.set_entry_point("route_message")
     graph.add_conditional_edges(
         "route_message",
-        _route_after_split,
+        _route_after_scope_check,
         {
             "extract_preferences": "extract_preferences",
-            "handle_smalltalk": "handle_smalltalk",
-            "acknowledge_preferences_only": "acknowledge_preferences_only",
+            "guardrail": "guardrail",
         },
     )
-    graph.add_edge("extract_preferences", END)
-    graph.add_edge("handle_smalltalk", END)
-    graph.add_edge("acknowledge_preferences_only", END)
+    graph.add_conditional_edges(
+        "extract_preferences",
+        _route_after_extraction,
+        {"acknowledge": "acknowledge", "guardrail": "guardrail"},
+    )
+    graph.add_edge("guardrail", END)
+    graph.add_edge("acknowledge", END)
 
     return graph.compile()
 

@@ -1,6 +1,6 @@
 """Preference Extractor.
 
-라우터가 분리해낸 "선호 관련 텍스트"를 Vocabulary 매핑된 구조화 선호로 변환한다.
+가드레일을 통과한 입력에서 개인 선호만 골라 Vocabulary 매핑된 구조로 변환한다.
 """
 
 from typing import Literal
@@ -84,7 +84,4 @@ async def extract_preferences(text: str) -> list[ExtractedPreference]:
 
 
 async def extract_preferences_node(state: PreferenceState) -> dict:
-    preference_text = state.get("preference_text")
-    if not preference_text:
-        return {"preferences": []}
-    return {"preferences": await extract_preferences(preference_text)}
+    return {"preferences": await extract_preferences(state["message"])}

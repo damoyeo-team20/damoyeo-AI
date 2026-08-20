@@ -184,6 +184,9 @@ Back이 제공하고 AI가 호출한다. Request body는 없다.
 
 규칙:
 
+- 입력이 개인 선호 범위 밖이면 `extractedPreferences`는 `[]`이고, `reply`로 음식·음주·분위기·활동
+  선호를 입력하도록 고정 안내한다. 잡담을 이어가지는 않는다.
+- 입력이 선호 범위 안이라고 분류됐더라도 실제 선호를 추출하지 못하면 같은 고정 안내를 반환한다.
 - `displayName`과 `domain`은 `vocabularyCode`로 Vocabulary에서 조회한 값이다.
 - `UNMAPPED`이면 `vocabularyCode`, `displayName`, `domain`이 모두 `null`이다.
 - non-null `vocabularyCode`, `displayName`, `domain`은 각각 100자, 100자, 50자 이하다.
@@ -259,7 +262,10 @@ AI는 상태를 저장하지 않는다 (LLM 호출 자체가 매번 독립적이
 
 날짜 변경 규칙:
 
-- 요청에 `candidateDates`가 없으면 AI는 날짜 변경 의도를 판단하지 않는다 — 응답은 지금과 동일하게 `reply`만 채워진다.
+- 모든 발화는 먼저 `IN_SCOPE / OUT_OF_SCOPE`로 분류된다. 모임 목적·분위기·활동·장소 조건과 무관한
+  입력은 `reply`로 이 화면에서 입력할 내용을 고정 안내하고, `candidateDates`는 요청 그대로 유지한다.
+- 요청에 `candidateDates`가 없으면 `DATE_CHANGE` 분기는 허용되지 않는다. 날짜·지역·시간 변경 요청은
+  이 화면의 `OUT_OF_SCOPE`로 안내하고, 목적 대화만 계속한다.
 - 요청에 `candidateDates`가 있어도, 이번 발화가 명확히 어떤 날짜인지 특정하지 못하면(예: "다른 날로 바꾸고 싶어"처럼 방향만 밝힌 경우) `selected`는 바뀌지 않고 `reply`가 "어떤 날짜로 바꿔드릴까요?"처럼 되묻는다. 다음 턴에서 사용자가 날짜를 특정하면(예: "30일로 해줘") 그때 `selected`가 이동한다.
 - 응답 `candidateDates`에서 새로 `selected: true`가 된 날짜는 항상 요청 `candidateDates`에 있던 값 중 하나다 — 목록 밖 날짜가 나올 수 없도록 AI가 응답 스키마 자체에서 강제한다.
 - `selected`가 바뀐 응답을 받으면 Back은 그 날짜에 대한 `resolvedStartAt`/`resolvedEndAt`을 다시 계산해서 저장해야 한다. 이 API는 날짜(`date`)만 돌려주고 시각은 돌려주지 않는다 — 원래 `/schedule` 확정 때 쓴 `preferredTimeOfDay`/`durationMinutes`를 그대로 적용해 6장의 `PreferredTimeOfDay` 규칙대로 계산하면 된다(AI를 다시 호출할 필요 없다).
@@ -305,7 +311,9 @@ AI는 상태를 저장하지 않는다 (LLM 호출 자체가 매번 독립적이
 | `reply` | `string` | X | 요약 완료를 알리는 답변 |
 | `purpose` | `string` | X | 저장용 한 문장, 최대 1,000자 |
 
-지역·날짜·시간대는 이 API에서 변경하지 않는다. Back은 응답 검증 후 `purpose`를 `meetings.purpose`에 저장한다. `currentPurpose` 같은 누적 상태 필드는 없다 — 매번 전체 원문을 보고 한 번에 요약하기 때문이다.
+지역·날짜·시간대는 이 API에서 변경하지 않는다. 범위 밖 입력·가드레일 안내·날짜 변경 대화는
+`purpose`에서 제외한다. Back은 응답 검증 후 `purpose`를 `meetings.purpose`에 저장한다.
+`currentPurpose` 같은 누적 상태 필드는 없다 — 매번 전체 원문을 보고 한 번에 요약하기 때문이다.
 
 | HTTP | code | 발생 조건 | retryable |
 | --- | --- | --- | --- |

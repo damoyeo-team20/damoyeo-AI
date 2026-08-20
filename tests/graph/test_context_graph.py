@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from app.graph import build_context_graph
-from app.graph.nodes import n_context_parser, n_context_router, n_context_date_reselector
+from app.graph.nodes import n_context_date_reselector, n_context_parser, n_context_router
 from app.schemas.meeting_context import CandidateDate
 
 _CANDIDATES = [
@@ -12,16 +12,20 @@ _CANDIDATES = [
 
 
 def test_graph_routes_to_generate_reply_without_candidate_dates(monkeypatch):
+    class _RouterLLM:
+        async def ainvoke(self, _messages):
+            return SimpleNamespace(route="IN_SCOPE")
+
     class _ChatLLM:
         async def ainvoke(self, _messages):
             return SimpleNamespace(content="편안하게 준비할게요.")
 
+    monkeypatch.setattr(
+        n_context_router,
+        "get_llm",
+        lambda: SimpleNamespace(with_structured_output=lambda _s: _RouterLLM()),
+    )
     monkeypatch.setattr(n_context_parser, "get_llm", lambda: _ChatLLM())
-
-    def _fail_router(*_args, **_kwargs):
-        raise AssertionError("candidate_dates가 없으면 라우터 LLM을 호출하면 안 된다")
-
-    monkeypatch.setattr(n_context_router, "get_llm", _fail_router)
 
     graph = build_context_graph.build_context_graph()
     result = asyncio.run(graph.ainvoke({"history": [], "message": "오늘 뭐 먹을까요?"}))
@@ -33,7 +37,7 @@ def test_graph_routes_to_generate_reply_without_candidate_dates(monkeypatch):
 def test_graph_routes_to_reselect_date_when_intent_detected(monkeypatch):
     class _RouterLLM:
         async def ainvoke(self, _messages):
-            return SimpleNamespace(wants_date_change=True)
+            return SimpleNamespace(route="DATE_CHANGE")
 
     class _ReselectLLM:
         async def ainvoke(self, _messages):
@@ -65,3 +69,32 @@ def test_graph_routes_to_reselect_date_when_intent_detected(monkeypatch):
         CandidateDate(date="2026-08-23", selected=False),
         CandidateDate(date="2026-08-30", selected=True),
     ]
+
+
+def test_graph_routes_out_of_scope_to_fixed_guardrail(monkeypatch):
+    class _RouterLLM:
+        async def ainvoke(self, _messages):
+            return SimpleNamespace(route="OUT_OF_SCOPE")
+
+    def _fail_downstream(*_args, **_kwargs):
+        raise AssertionError("범위 밖 입력에서 Parser나 Date Reselector를 실행하면 안 된다")
+
+    monkeypatch.setattr(
+        n_context_router,
+        "get_llm",
+        lambda: SimpleNamespace(with_structured_output=lambda _s: _RouterLLM()),
+    )
+    monkeypatch.setattr(n_context_parser, "get_llm", _fail_downstream)
+    monkeypatch.setattr(n_context_date_reselector, "get_llm", _fail_downstream)
+
+    graph = build_context_graph.build_context_graph()
+    result = asyncio.run(
+        graph.ainvoke(
+            {"history": [], "message": "오늘 날씨 알려줘", "candidate_dates": _CANDIDATES}
+        )
+    )
+
+    assert result["reply"] == (
+        "이번 모임의 목적, 원하는 분위기나 활동, 꼭 반영할 조건을 알려주세요."
+    )
+    assert result["candidate_dates"] == _CANDIDATES
