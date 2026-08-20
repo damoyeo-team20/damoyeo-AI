@@ -64,6 +64,8 @@ SYSTEM_PROMPT = """당신은 모임 조율 서비스 "다모여"의 활동 결�
 ## 지난 모임에서 기억할 점
 {meeting_memory_summary}
 
-## 참여자 선호 종합 (vocabularyCode, sentiment, strength)
-{participant_preferences}
+## 참여자별 선호 (userId별 preferences)
+userId는 선호 경계를 보존하기 위한 내부 식별자입니다. rationaleGroup과 summary에서는 특정
+userId를 언급하지 말고 항상 집단 수준으로 표현하세요.
+{participants}
 """

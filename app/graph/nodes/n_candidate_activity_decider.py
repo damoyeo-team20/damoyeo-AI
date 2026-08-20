@@ -44,8 +44,8 @@ async def decide_activities(state: CandidatesState) -> dict:
         confirmed_slot=confirmed_slot.model_dump(by_alias=True, mode="json"),
         region=meeting.region,
         meeting_memory_summary=state.get("meeting_memory_summary") or "(없음)",
-        participant_preferences=[
-            p.model_dump(by_alias=True) for p in state.get("participant_preferences", [])
+        participants=[
+            participant.model_dump(by_alias=True) for participant in state.get("participants", [])
         ],
     )
 

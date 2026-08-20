@@ -135,7 +135,7 @@ def test_conflict_is_surfaced_as_action_required(monkeypatch):
     assert body["actionRequired"]["conflictingPreferenceCodes"] == ["ALCOHOL"]
 
 
-def test_participant_preferences_are_flattened_for_the_graph(monkeypatch):
+def test_participant_boundaries_are_preserved_for_the_graph(monkeypatch):
     graph = _stub_graph(monkeypatch, {"suggestions": [], "meeting_tags": []})
 
     participants = [
@@ -164,9 +164,12 @@ def test_participant_preferences_are_flattened_for_the_graph(monkeypatch):
     ]
     client.post("/ai/meetings/20/candidates", json=_payload(participants=participants))
 
-    # 후보 선정은 집단 수준으로만 판단하므로 참여자 구분 없이 합쳐서 넘긴다.
-    codes = [p.vocabulary_code for p in graph.state["participant_preferences"]]
-    assert codes == ["SPICY_FOOD", "SEAFOOD"]
+    assert [participant.user_id for participant in graph.state["participants"]] == [1, 2]
+    assert [
+        [preference.vocabulary_code for preference in participant.preferences]
+        for participant in graph.state["participants"]
+    ] == [["SPICY_FOOD"], ["SEAFOOD"]]
+    assert "participant_preferences" not in graph.state
 
 
 def test_timeout_with_no_suggestions_returns_504_not_no_candidate(monkeypatch):

@@ -12,7 +12,7 @@ from app.schemas.candidates import (
     ActionRequired,
     ConfirmedSlot,
     MeetingInput,
-    ParticipantPreference,
+    ParticipantInput,
     Suggestion,
     Tag,
 )
@@ -56,8 +56,9 @@ class CandidatesState(TypedDict, total=False):
     # 입력
     meeting: MeetingInput
     confirmed_slot: ConfirmedSlot
-    # 참여자 구분 없이 합친 선호 목록. 후보 선정은 항상 집단 수준으로 판단한다.
-    participant_preferences: list[ParticipantPreference]
+    # Back이 보낸 참여자별 선호 구조를 그대로 유지한다. 공정성 계산 전까지 userId 경계를
+    # 잃으면 개인 만족도와 최저 만족도를 계산할 수 없다.
+    participants: list[ParticipantInput]
     meeting_memory_summary: str | None
     excluded_external_place_ids: list[str]
 

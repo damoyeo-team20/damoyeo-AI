@@ -61,15 +61,13 @@ async def get_candidates(meeting_id: int, payload: CandidatesRequest) -> Candida
         )
 
     applied_duration = payload.confirmed_slot.duration_minutes
-    # 참여자별 구분은 여기서 없앤다 — 후보 선정은 항상 집단 수준으로 판단하기 때문.
-    preferences = [pref for p in payload.participants for pref in p.preferences]
-
     graph = get_candidates_graph()
     result = await graph.ainvoke(
         {
             "meeting": payload.meeting,
             "confirmed_slot": payload.confirmed_slot,
-            "participant_preferences": preferences,
+            # 외부 DTO는 그대로 두고, 이미 받은 참여자 경계를 내부 그래프까지 보존한다.
+            "participants": payload.participants,
             "meeting_memory_summary": (payload.meeting_memory or {}).get("summary"),
             "excluded_external_place_ids": payload.excluded_external_place_ids,
         }

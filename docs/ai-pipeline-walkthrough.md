@@ -204,14 +204,14 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
 
 ## 4단계 — 장소 후보 생성 (`POST /ai/meetings/{id}/candidates`)
 
-여기서부터가 실제로 하나의 LangGraph로 이어진 계산입니다(`app/graph/build_graph.py`). Back이 `meeting`(purpose/region), `confirmedSlot`(3단계 결과), `participants[].preferences`(1단계 결과 누적)를 한 번에 실어 보내면, 라우트가 `participants`의 선호를 전부 펼쳐서 참여자 구분 없는 하나의 리스트(`participant_preferences`)로 합친 뒤 그래프에 넣습니다 — **후보 선정은 항상 집단 수준으로 판단하고, 개별 참여자를 지칭하지 않습니다.**
+여기서부터가 실제로 하나의 LangGraph로 이어진 계산입니다(`app/graph/build_graph.py`). Back이 `meeting`(purpose/region), `confirmedSlot`(3단계 결과), `participants[].preferences`(1단계 결과 누적)를 한 번에 실어 보냅니다. 라우트와 그래프는 `participants[].userId` 경계를 그대로 보존합니다. 최종 문장은 여전히 특정 참여자를 지칭하지 않지만, 내부 계산에서는 각 참여자의 만족도를 따로 계산합니다.
 
 ### 4.1 Candidate Activity Decider
 
 | | |
 | --- | --- |
 | 파일 | `app/graph/nodes/n_candidate_activity_decider.py` |
-| 입력 | `meeting.purpose`, `meeting.region`, `confirmed_slot`, `meeting_memory_summary`(지난 모임 요약, 없으면 "(없음)"), `participant_preferences` |
+| 입력 | `meeting.purpose`, `meeting.region`, `confirmed_slot`, `meeting_memory_summary`(지난 모임 요약, 없으면 "(없음)"), `participants[].preferences` |
 | 방식 | LLM 구조화 출력 |
 | 출력 | (정상) `activities`, `meeting_tags`, `summary` / (충돌) `action_required` |
 
@@ -262,26 +262,53 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
 
 20초 안에 못 끝난 작업은 취소하지만 장소 후보 자체는 버리지 않고 `UNKNOWN`으로 복원하며(`verification_timed_out=true`), 검색/판정 중 예외가 나도 해당 장소는 `UNKNOWN`으로 남습니다. 따라서 영업시간을 확인하지 못했다는 이유만으로 추천 후보가 사라지지 않습니다. `app/core/config.py`의 `SKIP_BUSINESS_HOURS_VERIFICATION` 플래그가 켜져 있으면 검색·판정을 아예 생략하고 즉시 `UNKNOWN`을 반환합니다(빠른 로컬 테스트용).
 
-### 4.4 Candidate Ranker
+### 4.4 Candidate Fairness Ranker
 
 | | |
 | --- | --- |
 | 파일 | `app/graph/nodes/n_candidate_ranker.py` |
-| 입력 | `verified_places`(`FAIL` 제외), `participant_preferences`, `meeting.purpose`, `activities`의 `rationale_group` |
-| 방식 | LLM 구조화 출력 + 서버 후처리 |
+| 입력 | `verified_places`(`FAIL` 제외), `participants[].preferences`, `meeting.purpose`, `activities`의 `rationale_group` |
+| 방식 | LLM 의미 관계 판정 + 순수 Python 만족도·공정성 계산 + 서버 후처리 |
 | 출력 | `suggestions` (최대 3개) |
 
-`FAIL`이 아닌 후보(`PASS`, `UNKNOWN` 포함)만 LLM에 넘깁니다. 프롬프트(`app/prompts/n_candidate_ranker.py`)에는 장소당 `kakaoPlaceId`/`activity`/`activityRationale`/`name`/`category`/`verificationStatus`만 전달됩니다(영업시간 문구·좌표 등은 안 줌). LLM이 내는 것:
+`FAIL`이 아닌 후보(`PASS`, `UNKNOWN` 포함)와 참여자별 선호를 LLM에 넘깁니다. 프롬프트(`app/prompts/n_candidate_ranker.py`)에는 장소당 `kakaoPlaceId`/`activity`/`activityRationale`/`name`/`category`/`verificationStatus`만 전달됩니다(영업시간 문구·좌표 등은 안 줌).
 
-- `ranked`: 최대 3개, 순서가 곧 순위. 후보마다 `reasons`(1~3개, 집단 수준 문장, 최소 1개 필수), `matchedPreferenceCodes`(요청에 실제 있는 코드만), `tags`(`MATCHES_ACTIVITY`/`HIGH_GROUP_FIT`/`GOOD_FOR_MEAL`/`GOOD_FOR_DRINKS` 중 확실한 것만 — `AVAILABLE_AT_MEETING_TIME`은 이 목록에서 아예 제외돼 있어 LLM이 고를 수 없음).
+LLM은 후보를 고르거나 순위를 매기지 않고 **모든 후보를 정확히 한 번씩** 평가합니다. 각 후보에서 모든 `(userId, vocabularyCode)` 쌍의 관계를 다음 셋 중 하나로 반환합니다.
+
+| 관계 | 내부 값 | 의미 |
+| --- | ---: | --- |
+| `DIRECT` | `1.0` | 후보가 선호 대상과 직접 대응 |
+| `PARTIAL` | `0.5` | 일부 관련 |
+| `NONE` | `0.0` | 관련 근거 없음 |
+
+relation은 긍정·부정을 뜻하지 않습니다. 예를 들어 매운 음식점은 `SPICY_FOOD/POSITIVE`와 `SPICY_INTOLERANT/NEGATIVE` 모두 `DIRECT`입니다. 서버가 `sentiment`를 적용해 전자는 높은 만족도, 후자는 낮은 만족도로 바꿉니다. LLM은 이 관계 외에 후보별 `reasons` 1~3개와 기존 후보 태그만 반환합니다.
+
+모델 결과는 서버가 엄격하게 검증합니다. 입력에 없거나 중복된 장소 ID·사용자 ID·선호 코드가 있거나, 후보 또는 선호 평가가 하나라도 빠지면 `502 MODEL_RESPONSE_INVALID`입니다. 잘못된 값을 조용히 순위 계산에 섞지 않습니다.
+
+서버의 순수 계산은 `app/graph/fairness.py`에 있습니다.
+
+```text
+POSITIVE → d(p)=+1       NEGATIVE → d(p)=-1
+WEAK=1, MODERATE=2, STRONG=3
+
+q(i,p,c) = 0.5 + 0.5 × d(p) × relationValue
+u(i,c)   = 해당 참여자 선호 q의 강도 가중평균
+S(c)     = 모든 참여자 u의 평균
+F(c)     = 모든 참여자 u의 최솟값
+Score(c) = 100 × [0.7 × S(c) + 0.3 × F(c)]
+```
+
+선호가 없는 참여자는 `u(i,c)=0.5`의 중립값입니다. `STRONG + NEGATIVE`가 후보와 직접 관련되면 개인 만족도는 `0.0`까지 내려가지만 후보를 즉시 제거하지는 않습니다. 대신 코드가 `_ALLERGY`로 끝나는 알레르기 Vocabulary와 후보의 관계를 `DIRECT`로 판정한 경우에만 안전 조건으로 veto합니다.
+
+후보는 `Score → F → S → 원래 Kakao 순서`로 정렬하고 최대 3개를 선택합니다. 즉 LLM 응답 배열의 순서는 최종 순위에 영향을 주지 않습니다.
 
 서버가 이후 붙이는 값(LLM 산출 아님):
-- `AVAILABLE_AT_MEETING_TIME` 태그와 `openAtMeetingTime`: 4.3의 `verification_status == PASS`일 때만 `true`로 붙임. `UNKNOWN`이면 태그도 안 붙고 `openAtMeetingTime`도 `null`.
-- `matchedPreferenceDomains`: LLM이 고른 `matchedPreferenceCodes`를 실제 요청에 있던 코드와 대조해서(없는 코드는 버림) Vocabulary의 `domain`으로 변환.
-- `proposedStartAt`/`proposedEndAt`: 3단계에서 확정된 `confirmedSlot`을 모든 제안에 그대로 사용(제안마다 다른 시각을 계산하지 않음).
-- `sourceUrls`: 4.3의 `place_url` + `verification_source`를 중복 제거해서.
+- `AVAILABLE_AT_MEETING_TIME` 태그와 `openAtMeetingTime`: 4.3의 `verification_status == PASS`일 때만 붙임. `UNKNOWN`이면 태그도 없고 `openAtMeetingTime=null`.
+- `matchedPreferenceDomains`: `POSITIVE` 선호 중 `DIRECT/PARTIAL`로 판정되어 실제 선정에 기여한 코드만 Vocabulary의 `domain`으로 변환.
+- `proposedStartAt`/`proposedEndAt`: 3단계의 `confirmedSlot`을 모든 제안에 그대로 사용.
+- `sourceUrls`: 4.3의 `place_url`과 `verification_source`를 중복 제거.
 
-LLM이 존재하지 않는 `kakaoPlaceId`를 답하면 그 항목은 조용히 버려지고(개수는 채우지 않고 다음 항목으로), 최종적으로 최대 3개까지만 `suggestions`에 담깁니다.
+개인 만족도와 공정성 점수는 AI 내부 랭킹 근거 및 debug trace에만 남고, Back 응답에는 새 필드를 추가하지 않습니다.
 
 ---
 
@@ -293,7 +320,7 @@ LLM이 존재하지 않는 `kakaoPlaceId`를 답하면 그 항목은 조용히 �
   confirmedSlot                       ← 3단계(Schedule) 결과, DB(meetings.confirmed_*)에서
   participants[].preferences          ← 1단계(Preference) 결과 누적, DB(user_preferences)에서
         │
-        ▼  (참여자 구분 없이 하나의 리스트로 펼침)
+        ▼  (userId별 선호 경계 유지)
 ┌─────────────────────────────────────────────────────────┐
 │ Candidate Activity Decider (LLM)                         │
 │  → activities[], meetingTags[], summary                  │
@@ -314,7 +341,8 @@ LLM이 존재하지 않는 `kakaoPlaceId`를 답하면 그 항목은 조용히 �
         │ (FAIL 제외)
         ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Candidate Ranker (LLM + 서버 후처리)                       │
-│  → suggestions[] (최대 3개, rank·reasons·tags·domains)     │
+│ Candidate Fairness Ranker                                 │
+│  LLM 관계 판정 → Python u/S/F/Score 계산 → 최대 3개        │
+│  → suggestions[] (기존 rank·reasons·tags·domains)          │
 └─────────────────────────────────────────────────────────┘
 ```
