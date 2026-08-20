@@ -1,20 +1,32 @@
 from fastapi import APIRouter
 
 from app.graph.build_graph import get_candidates_graph
-from app.graph.nodes.n2_context_parser import parse_meeting_context
+from app.graph.nodes.n2_context_parser import finalize_meeting_context, generate_context_reply
 from app.graph.nodes.n8_revision_router import route_revision
 from app.schemas.candidates import CandidatesRequest, CandidatesResponse, CandidatesStatus
-from app.schemas.meeting_context import MeetingContextRequest, MeetingContextResponse
+from app.schemas.meeting_context import (
+    ContextFinalizeRequest,
+    ContextFinalizeResponse,
+    ContextMessageRequest,
+    ContextMessageResponse,
+)
 from app.schemas.revise import ReviseRequest, ReviseResponse
 
 router = APIRouter(prefix="/ai/meetings/{meeting_id}", tags=["meetings"])
 
 
-@router.post("/context", response_model=MeetingContextResponse)
-async def parse_context(
-    meeting_id: int, payload: MeetingContextRequest
-) -> MeetingContextResponse:
-    return await parse_meeting_context(payload.purpose, payload.ui_inputs)
+@router.post("/context/messages", response_model=ContextMessageResponse)
+async def context_message(
+    meeting_id: int, payload: ContextMessageRequest
+) -> ContextMessageResponse:
+    return await generate_context_reply(payload.history, payload.message)
+
+
+@router.post("/context", response_model=ContextFinalizeResponse)
+async def finalize_context(
+    meeting_id: int, payload: ContextFinalizeRequest
+) -> ContextFinalizeResponse:
+    return await finalize_meeting_context(payload.history)
 
 
 @router.post("/candidates", response_model=CandidatesResponse)

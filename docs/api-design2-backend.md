@@ -8,14 +8,18 @@
 
 ### 엔드포인트
 
-| Method | Path | 호출 주체 | 기능 |
-| --- | --- | --- | --- |
-| `GET` | `/health` | Back/운영 인프라 | AI 서버 생존 확인 |
-| `GET` | `/internal/preference-vocabulary` | AI → Back | 선호 Vocabulary 조회 |
-| `POST` | `/ai/preferences/extract` | Back → AI | 개인 선호 추출 및 답변 생성 |
-| `POST` | `/ai/meetings/{meetingId}/context` | Back → AI | 모임 목적 한 문장 정리 |
-| `POST` | `/ai/meetings/{meetingId}/candidates` | Back worker → AI | 시간·장소 후보 생성 |
-| `POST` | `/ai/meetings/{meetingId}/revise` | Back → AI | 재생성 대화 한 턴 처리 |
+| Method | Path | 호출 주체 | 기능 | 구현 상태 |
+| --- | --- | --- | --- | --- |
+| `GET` | `/health` | Back/운영 인프라 | AI 서버 생존 확인 | ✅ 구현됨 |
+| `GET` | `/internal/preference-vocabulary` | AI → Back | 선호 Vocabulary 조회 | ✅ 구현됨 (캐시 갱신 정책만 미정) |
+| `POST` | `/ai/preferences/extract` | Back → AI | 개인 선호 추출 및 답변 생성 | ✅ 구현됨 |
+| `POST` | `/ai/meetings/{meetingId}/context/messages` | Back → AI | 모임 목적 채팅 한 턴 | ✅ 구현됨 |
+| `POST` | `/ai/meetings/{meetingId}/context` | Back → AI | 모임 목적 채팅 최종 전송 시 한 문장 요약 | ✅ 구현됨 |
+| `POST` | `/ai/meetings/{meetingId}/candidates` | Back worker → AI | 시간·장소 후보 생성 | 🔴 미구현 — 목표 계약. 날짜 교집합 계산 주체도 미확정 |
+
+전용 재생성(`/revise`) API는 없다. "재생성"은 제품 흐름상 "뒤로가기"로 단순화됐다 — Back이 `/context/messages`로 되돌아가 다시 대화하고 `/context`로 재요약한 뒤 `/candidates`를 다시 호출한다. 이전에 보여준 장소는 `/candidates`의 `excludedExternalPlaceIds`에 누적해서 채운다(6장 참고). 현재 코드에는 단일 `feedback` 기반 `/revise`가 아직 남아있으며, 삭제는 사용자 확인 후 진행한다.
+
+🔴로 표시한 항목은 이 문서의 계약대로 지금 당장 연동하면 실패한다. 상세 격차는 [`api-design2.md`](api-design2.md) 13장 참고.
 
 ### 기본 규칙
 
@@ -170,46 +174,91 @@ Back이 제공하고 AI가 호출한다. Request body는 없다.
 
 ---
 
-## 5. `POST /ai/meetings/{meetingId}/context`
+## 5. 모임 목적 채팅 (2단계)
 
-새 모임의 목적 대화를 사용자용 답변과 저장용 한 문장으로 정리한다.
+새 모임의 목적 대화를 채팅 형태로 주고받는다. 턴마다 요약하지 않고, 최종 전송 시 전체 대화를 한 번에 한 문장으로 정리한다 — 매 턴 요약하면 LLM 호출이 낭비되고, 요약의 요약이 반복되면서 원래 뉘앙스가 깎이기 때문이다.
+
+AI는 상태를 저장하지 않는다 (LLM 호출 자체가 매번 독립적이라 이전 턴을 기억하지 못한다). Back이 `meeting_chat_messages`에서 해당 `meetingId`의 대화 원문을 조회해 매번 `history`로 통째로 실어 보내야 한다. 어떤 대화가 이 일정에 속하는지 필터링하는 건 전적으로 Back의 책임이며 AI 요청 스키마에는 `meetingId` 외의 필터 필드가 없다.
+
+### 5.1 `POST /ai/meetings/{meetingId}/context/messages` — 채팅 한 턴
 
 ### Request
 
 ```json
 {
-  "messages": [
-    "오랜만에 만나 저녁 먹고 이야기하려고요",
-    "너무 시끄러운 곳은 피하고 싶어요"
+  "history": [
+    { "role": "USER", "content": "오랜만에 만나서 저녁 먹고 이야기하려고요" },
+    { "role": "ASSISTANT", "content": "편안한 저녁 자리로 준비할게요. 원하시는 분위기가 있을까요?" }
   ],
-  "currentPurpose": null
+  "message": "너무 시끄러운 곳은 피하고 싶어요"
 }
 ```
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `messages` | `string[]` | O | 이번 턴에 새로 입력한 목적·조건 문장 |
-| `currentPurpose` | `string \| null` | O | 현재 저장된 목적. 최초 입력이면 `null` |
+| `history` | `ChatTurn[]` | O | 이전까지의 대화 전체. 첫 턴이면 `[]` |
+| `history[].role` | `USER \| ASSISTANT` | O | `meeting_chat_messages.role`과 동일 |
+| `history[].content` | `string` | O | 해당 턴의 원문 |
+| `message` | `string` | O | 이번 턴의 새 사용자 발화. 공백만 있으면 안 됨 |
+
+### Response `200`
+
+```json
+{ "reply": "네, 조용한 곳으로 찾아볼게요. 더 말씀해주실 조건이 있을까요?" }
+```
+
+| 필드 | 타입 | nullable | 설명 |
+| --- | --- | --- | --- |
+| `reply` | `string` | X | 사용자에게 표시할 대화형 답변 |
+
+이 단계에서는 `purpose`를 만들지 않는다. Back은 이번 턴의 `message`와 응답 `reply`를 각각 `USER`/`ASSISTANT` 행으로 `meeting_chat_messages`에 저장한다.
+
+| HTTP | code | 발생 조건 | retryable |
+| --- | --- | --- | --- |
+| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락·타입 오류 또는 `message`가 공백뿐임 | `false` |
+| `503` | `MODEL_UNAVAILABLE` | LLM 호출 불가 | `true` |
+| `502` | `MODEL_RESPONSE_INVALID` | 모델 결과가 응답 스키마와 불일치 | `true` |
+
+### 5.2 `POST /ai/meetings/{meetingId}/context` — 최종 전송
+
+사용자가 "최종 전송하기"를 누르면 그동안의 대화 전체를 한 번에 요약한다.
+
+### Request
+
+```json
+{
+  "history": [
+    { "role": "USER", "content": "오랜만에 만나서 저녁 먹고 이야기하려고요" },
+    { "role": "ASSISTANT", "content": "편안한 저녁 자리로 준비할게요. 원하시는 분위기가 있을까요?" },
+    { "role": "USER", "content": "너무 시끄러운 곳은 피하고 싶어요" },
+    { "role": "ASSISTANT", "content": "네, 조용한 곳으로 찾아볼게요. 더 말씀해주실 조건이 있을까요?" }
+  ]
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `history` | `ChatTurn[]` | O | 5.1에서 오간 대화 전체 (마지막 턴까지 포함). `USER` 발화가 최소 1개 있어야 함 |
 
 ### Response `200`
 
 ```json
 {
-  "reply": "편안하게 대화할 수 있는 저녁 모임으로 이해했어요.",
+  "reply": "편안하게 대화할 수 있는 조용한 저녁 모임으로 정리했어요.",
   "purpose": "오랜만에 만나 조용한 곳에서 대화하는 저녁 식사"
 }
 ```
 
 | 필드 | 타입 | nullable | 설명 |
 | --- | --- | --- | --- |
-| `reply` | `string` | X | 사용자에게 표시할 답변 |
+| `reply` | `string` | X | 요약 완료를 알리는 답변 |
 | `purpose` | `string` | X | 저장용 한 문장, 최대 1,000자 |
 
-`messages`에는 공백이 아닌 문장이 최소 1개 있어야 하고 `currentPurpose`와 응답 `purpose`는 1,000자 이하다. 지역·날짜·시간대는 이 API에서 변경하지 않는다. Back은 응답 검증 후 `purpose`와 대화 원문을 저장한다.
+지역·날짜·시간대는 이 API에서 변경하지 않는다. Back은 응답 검증 후 `purpose`를 `meetings.purpose`에 저장한다. `currentPurpose` 같은 누적 상태 필드는 없다 — 매번 전체 원문을 보고 한 번에 요약하기 때문이다.
 
 | HTTP | code | 발생 조건 | retryable |
 | --- | --- | --- | --- |
-| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락·타입·길이 오류 또는 유효한 목적 문장이 없음 | `false` |
+| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락·타입 오류 또는 `USER` 발화가 하나도 없음 | `false` |
 | `503` | `MODEL_UNAVAILABLE` | LLM 호출 불가 | `true` |
 | `502` | `MODEL_RESPONSE_INVALID` | 모델 결과가 응답 스키마와 불일치 | `true` |
 
@@ -263,7 +312,7 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | `contractVersion` | `string` | O | 현재 `1.0` |
 | `requestId` | `UUID string` | O | 요청 추적 ID |
 | `meeting.id` | `integer` | O | path의 `meetingId`와 동일해야 함 |
-| `meeting.purpose` | `string` | O | 현재 목적 또는 재생성 pending 목적, 최대 1,000자 |
+| `meeting.purpose` | `string` | O | `meetings.purpose`의 현재 목적. 재생성이면 `/context/messages`+`/context`로 다시 얻은 새 목적, 최대 1,000자 |
 | `meeting.region` | `string` | O | 장소 검색 지역, 최대 100자 |
 | `meeting.scheduleSearchFrom` | `date` | O | 탐색 시작일 |
 | `meeting.scheduleSearchTo` | `date` | O | 탐색 종료일 |
@@ -280,7 +329,7 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | `participants[].preferences[].rawValue` | `string` | O | 원래 표현 |
 | `meetingMemory` | `object \| null` | O | 과거 모임 요약. 없으면 `null`; `summary` 사용 가능 |
 | `meetingMemory.summary` | `string` | X | 선택 필드. 같은 그룹의 과거 모임 요약 |
-| `excludedExternalPlaceIds` | `string[]` | O | 재추천하지 않을 장소 ID |
+| `excludedExternalPlaceIds` | `string[]` | O | 이미 보여준 외부 장소 ID 전체. 최초 생성이면 `[]`이고, 재생성("뒤로가기" 후 다시 생성)이면 지금까지 모든 generation에서 보여준 ID를 누적해서 채운다 |
 
 ### Response `200` — 성공
 
@@ -361,6 +410,7 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | `suggestions[].reasons` | `string[]` | X | 그룹 수준 선정 사유 (문장) |
 | `suggestions[].tags` | `Tag[]` | X | 이 장소를 추천한 이유 배지. 근거가 없으면 `[]`. `AVAILABLE_AT_MEETING_TIME`은 LLM이 고르지 않고 `businessHoursVerified`/`openAtMeetingTime`에서 서버가 파생시킨다 |
 | `suggestions[].sourceUrls` | `URI[]` | X | 장소·영업 정보 출처 |
+| `suggestions[].checkedAt` | `datetime` | X | 외부 정보 확인 시각 |
 
 ### `Tag`
 
@@ -393,7 +443,6 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | `GOOD_FOR_MEAL` | 식사하기 좋음 | LLM |
 | `GOOD_FOR_DRINKS` | 술자리 적합 | LLM |
 | `AVAILABLE_AT_MEETING_TIME` | 모임 시간에 이용 가능 | 서버(코드) |
-| `suggestions[].checkedAt` | `datetime` | X | 외부 정보 확인 시각 |
 
 ### CandidateStatus
 
@@ -458,89 +507,15 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 
 ---
 
-## 7. `POST /ai/meetings/{meetingId}/revise`
+## 7. 재생성("뒤로가기") — 전용 API 없음
 
-재생성 대화의 각 턴을 처리한다. Back은 첫 턴에 현재 목적, 이후 턴에 직전 `draftPurpose`를 다시 전달한다.
+`POST /ai/meetings/{meetingId}/revise`는 목표 계약에서 제거했다. "재생성"은 제품 흐름상 전용 화면이 아니라 목적 대화 화면(5장)으로의 "뒤로가기"로 구현되므로, 별도 엔드포인트나 `currentDraftPurpose`/`currentSuggestions`/`uiChangeRequests` 같은 전용 스키마가 필요 없다.
 
-### Request
+대체 흐름:
 
-```json
-{
-  "messages": [
-    "조금 더 조용한 곳이면 좋겠어",
-    "1번 장소는 제외해줘"
-  ],
-  "currentDraftPurpose": "오랜만에 만나 대화하는 저녁 식사",
-  "currentSuggestions": [
-    {
-      "rank": 1,
-      "externalPlaceId": "12345678",
-      "name": "건대 예시 한식당",
-      "category": "한식",
-      "proposedStartAt": "2026-08-30T19:00:00+09:00",
-      "proposedEndAt": "2026-08-30T21:00:00+09:00",
-      "reasons": [
-        "대화하기 좋은 식사 장소예요."
-      ]
-    }
-  ],
-  "excludedExternalPlaceIds": []
-}
-```
+1. Back이 사용자를 `/context/messages` 대화 화면으로 되돌린다 (5.1장).
+2. 사용자가 다시 "최종 전송하기"를 누르면 `/context`로 새 `purpose`를 받는다 (5.2장).
+3. Back이 `/candidates`를 다시 호출한다. 이때 지금까지 모든 generation에서 보여준 `externalPlaceId`를 누적해 `excludedExternalPlaceIds`에 채운다(6장) — 목록이 비어 있으면 예전과 동일하게 동작하고, 채워져 있으면 해당 장소를 제외한다. 새로 추가한 필드가 아니라 6장에 이미 있던 필드다.
+4. 특정 장소 하나만 콕 집어 제외하는 대화형 협상은 지원하지 않는다 — 다시 시작하면 이전에 보여준 것 전체가 제외 대상이다.
 
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `messages` | `string[]` | O | 이번 턴의 새 피드백 |
-| `currentDraftPurpose` | `string` | O | 직전 목적 초안. 첫 턴에는 현재 목적 |
-| `currentSuggestions` | `CurrentSuggestion[]` | O | 현재 제안, 최대 3개 |
-| `currentSuggestions[].rank` | `integer` | O | 현재 순위 |
-| `currentSuggestions[].externalPlaceId` | `string` | O | 외부 장소 ID |
-| `currentSuggestions[].name` | `string` | O | 장소 이름 |
-| `currentSuggestions[].category` | `string` | O | 카테고리 |
-| `currentSuggestions[].proposedStartAt` | `datetime` | O | 현재 제안 시작 시각 |
-| `currentSuggestions[].proposedEndAt` | `datetime` | O | 현재 제안 종료 시각 |
-| `currentSuggestions[].reasons` | `string[]` | O | 현재 선정 사유 |
-| `excludedExternalPlaceIds` | `string[]` | O | 앞선 턴까지의 제외 장소 ID |
-
-### Response `200`
-
-```json
-{
-  "reply": "더 조용한 곳을 찾고 1번 장소는 제외할게요. 이 조건으로 다시 추천할까요?",
-  "draftPurpose": "오랜만에 만나 더 조용한 곳에서 대화하는 저녁 식사",
-  "excludedExternalPlaceIds": [
-    "12345678"
-  ],
-  "uiChangeRequests": []
-}
-```
-
-| 필드 | 타입 | nullable | 설명 |
-| --- | --- | --- | --- |
-| `reply` | `string` | X | 사용자에게 표시할 답변 |
-| `draftPurpose` | `string` | X | 갱신된 한 문장 목적 초안, 최대 1,000자 |
-| `excludedExternalPlaceIds` | `string[]` | X | 이번 턴까지 반영한 최신 제외 목록 |
-| `uiChangeRequests` | `UiChangeRequest[]` | X | UI에서 재확인할 변경. 없으면 `[]` |
-| `uiChangeRequests[].field` | `REGION \| DATE \| TIME` | X | 변경 대상 |
-| `uiChangeRequests[].mentionedValue` | `string \| null` | O | 사용자가 언급한 값 |
-| `uiChangeRequests[].question` | `string` | X | 사용자 확인 질문 |
-
-규칙:
-
-- AI는 상태를 저장하지 않는다. Back이 직전 초안과 제외 목록을 매 턴 다시 보낸다.
-- `messages`에는 공백이 아닌 문장이 최소 1개 있어야 하고 `currentDraftPurpose`와 `draftPurpose`는 1,000자 이하다.
-- `currentSuggestions`의 `rank`와 `externalPlaceId`는 중복될 수 없고 종료 시각은 시작 시각보다 늦어야 한다.
-- `excludedExternalPlaceIds`에는 `currentSuggestions`에 존재하는 ID만 넣을 수 있다.
-- 사용자가 이전 제외를 명시적으로 취소하면 응답의 최신 제외 목록에서 해당 ID를 제거할 수 있다.
-- 지역·날짜·시간 변경은 `draftPurpose`에 넣지 않고 `uiChangeRequests`로 반환한다.
-- UI 변경은 Back이 명시적 UI 컨트롤로 확인한 뒤 pending 값으로 유지한다.
-- 사용자가 최종 확정하면 Back은 pending 목적·UI 값과 제외 목록으로 `/candidates`를 호출한다.
-- `/candidates`의 `OK` 결과 검증·저장 성공 시 목적·UI 값과 새 generation을 함께 커밋한다.
-- 오류 또는 `NO_COMMON_SLOT`, `CONFLICT`, `NO_CANDIDATE`이면 기존 목적과 활성 generation을 유지한다.
-
-| HTTP | code | 발생 조건 | retryable |
-| --- | --- | --- | --- |
-| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락·타입·길이 오류 또는 유효한 피드백이 없음 | `false` |
-| `400` | `UNKNOWN_CURRENT_SUGGESTION` | 제외 요청 장소가 현재 제안에 없음 | `false` |
-| `503` | `MODEL_UNAVAILABLE` | LLM 호출 불가 | `true` |
-| `502` | `MODEL_RESPONSE_INVALID` | 모델 결과가 응답 스키마와 불일치 | `true` |
+현재 코드에는 단일 `feedback` 기반 `/revise`가 아직 남아있다. 삭제는 사용자 확인 후 진행한다.

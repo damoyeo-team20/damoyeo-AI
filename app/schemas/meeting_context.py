@@ -1,42 +1,14 @@
-from datetime import date
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# N2 Meeting Context Parser
-# 출력 형태는 ai-part-proposal.md 5장 기준: {meeting_tone, activity_hints[], explicit_constraints[], conflicts_with_ui}
-# 입력 필드는 docs/db_schema.md의 `meetings` 테이블 컬럼에 1:1로 맞춘다.
-
-
-class PreferredTimeOfDay(str, Enum):
-    """`meetings.preferred_time_of_day`. 구체 시각이 아니라 시간대 구분만 받는다."""
-
-    DAYTIME = "DAYTIME"
-    LATE_AFTERNOON = "LATE_AFTERNOON"
-    EVENING = "EVENING"
-    ANY = "ANY"
-
-
-class UiInputs(BaseModel):
-    """지역·기간·시간대는 항상 UI 입력이 우선한다. LLM은 이 값을 추론하지 않는다."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    # meetings.region
-    region: str
-    # meetings.schedule_search_from / schedule_search_to
-    schedule_search_from: date = Field(alias="scheduleSearchFrom")
-    schedule_search_to: date = Field(alias="scheduleSearchTo")
-    # meetings.preferred_time_of_day
-    preferred_time_of_day: PreferredTimeOfDay = Field(alias="preferredTimeOfDay")
-
-
-class MeetingContextRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    # meetings.purpose — 주최자가 자연어로 남긴 이번 모임 목적.
-    purpose: str = Field(alias="purpose")
-    ui_inputs: UiInputs = Field(alias="uiInputs")
+# N2 모임 목적 채팅 (2단계: /context/messages 한 턴, /context 최종 요약)
+# 계약은 docs/api-design2-backend.md 5장 기준. 지역/날짜/시간대는 다른 화면(UI)에서 이미 확정되므로
+# 이 노드는 관여하지 않는다 — UiInputs/UiConflict 같은 개념은 새 계약에 없다.
+#
+# MeetingContext(activity_hints/meeting_tone/explicit_constraints)는 /candidates 파이프라인
+# (N4/N7)이 아직 참조하는 구조체라 여기 남겨둔다. /candidates 계약을 다음 단계에서 다시 맞출 때
+# meeting.purpose 단일 문자열로 대체되며 이 클래스는 제거될 예정이다.
 
 
 class MeetingContext(BaseModel):
@@ -48,19 +20,61 @@ class MeetingContext(BaseModel):
     explicit_constraints: list[str] = Field(default_factory=list, alias="explicitConstraints")
 
 
-class UiConflict(BaseModel):
-    """자연어 발화가 UI 입력값과 다를 때만 채워진다. AI는 UI 값을 임의로 덮어쓰지 않는다."""
+class ChatRole(str, Enum):
+    """`meeting_chat_messages.role`과 동일."""
+
+    USER = "USER"
+    ASSISTANT = "ASSISTANT"
+
+
+class ChatTurn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    role: ChatRole
+    content: str
+
+
+class ContextMessageRequest(BaseModel):
+    """`POST /ai/meetings/{meetingId}/context/messages` — 채팅 한 턴."""
 
     model_config = ConfigDict(populate_by_name=True)
 
-    field: str
-    ui_value: str = Field(alias="uiValue")
-    mentioned_value: str = Field(alias="mentionedValue")
-    question: str
+    # 이전까지의 대화 전체. AI는 상태를 저장하지 않으므로 Back이 매번 통째로 다시 보낸다.
+    history: list[ChatTurn] = Field(default_factory=list)
+    message: str
+
+    @field_validator("message")
+    @classmethod
+    def _reject_blank_message(cls, message: str) -> str:
+        if not message.strip():
+            raise ValueError("message는 공백일 수 없습니다.")
+        return message
 
 
-class MeetingContextResponse(BaseModel):
+class ContextMessageResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    meeting_context: MeetingContext = Field(alias="meetingContext")
-    conflicts_with_ui: list[UiConflict] = Field(default_factory=list, alias="conflictsWithUi")
+    reply: str
+
+
+class ContextFinalizeRequest(BaseModel):
+    """`POST /ai/meetings/{meetingId}/context` — 최종 전송 시 전체 대화 요약."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    history: list[ChatTurn]
+
+    @field_validator("history")
+    @classmethod
+    def _require_user_turn(cls, history: list[ChatTurn]) -> list[ChatTurn]:
+        if not any(turn.role == ChatRole.USER for turn in history):
+            raise ValueError("history에 USER 발화가 최소 1개 있어야 합니다.")
+        return history
+
+
+class ContextFinalizeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    reply: str
+    # meetings.purpose로 저장될 한 문장 요약, 최대 1,000자.
+    purpose: str

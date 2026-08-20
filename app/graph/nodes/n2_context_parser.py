@@ -1,70 +1,53 @@
-"""N2 Meeting Context Parser.
+"""N2 모임 목적 채팅.
 
-주최자의 자연어 요청을 해석한다. 지역/시간은 UI 입력이 항상 우선이며, LLM은 이 값을 추론하지 않는다.
-`POST /ai/meetings/{meetingId}/context`가 호출한다.
+두 단계로 나뉜다.
+- `generate_context_reply`: `POST /ai/meetings/{meetingId}/context/messages` — 채팅 한 턴.
+- `finalize_meeting_context`: `POST /ai/meetings/{meetingId}/context` — 최종 전송 시 전체 대화 요약.
+
+AI는 상태를 저장하지 않는다 — 두 함수 모두 매 호출마다 `history`를 통째로 받아야 하며, Back이
+`meeting_chat_messages`에서 해당 meetingId의 대화 원문을 조회해 실어 보낸다. 지역/날짜/시간대는
+다른 화면(UI)에서 이미 확정되므로 이 노드는 관여하지 않는다.
 """
 
-from typing import Literal
+from pydantic import BaseModel
 
-from pydantic import BaseModel, Field
-
-from app.core.llm import get_llm
-from app.prompts.n2_context_parser import SYSTEM_PROMPT, USER_TEMPLATE
+from app.core.llm import extract_text_content, get_llm
+from app.prompts.n2_context_parser import CHAT_SYSTEM_PROMPT, FINALIZE_SYSTEM_PROMPT
 from app.schemas.meeting_context import (
-    MeetingContext,
-    MeetingContextResponse,
-    UiConflict,
-    UiInputs,
+    ChatRole,
+    ChatTurn,
+    ContextFinalizeResponse,
+    ContextMessageResponse,
 )
 
 
-class _ConflictDraft(BaseModel):
-    field: Literal["region", "date", "time"]
-    mentioned_value: str
-    question: str
+def _to_lc_role(role: ChatRole) -> str:
+    return "assistant" if role == ChatRole.ASSISTANT else "user"
 
 
-class _ContextExtraction(BaseModel):
-    activity_hints: list[str] = Field(default_factory=list)
-    meeting_tone: str | None = None
-    explicit_constraints: list[str] = Field(default_factory=list)
-    conflicts: list[_ConflictDraft] = Field(default_factory=list)
+async def generate_context_reply(history: list[ChatTurn], message: str) -> ContextMessageResponse:
+    llm = get_llm()
+    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    messages += [{"role": _to_lc_role(turn.role), "content": turn.content} for turn in history]
+    messages.append({"role": "user", "content": message})
+
+    response = await llm.ainvoke(messages)
+    return ContextMessageResponse(reply=extract_text_content(response.content))
 
 
-def _ui_value_for(field: str, ui_inputs: UiInputs) -> str:
-    if field == "region":
-        return ui_inputs.region
-    if field == "date":
-        return f"{ui_inputs.schedule_search_from} ~ {ui_inputs.schedule_search_to}"
-    return ui_inputs.preferred_time_of_day.value
+class _FinalizeDraft(BaseModel):
+    reply: str
+    purpose: str
 
 
-async def parse_meeting_context(purpose: str, ui_inputs: UiInputs) -> MeetingContextResponse:
-    llm = get_llm().with_structured_output(_ContextExtraction)
-    system = SYSTEM_PROMPT.format(ui_inputs=ui_inputs.model_dump(by_alias=True, mode="json"))
-    user = USER_TEMPLATE.format(purpose=purpose)
+async def finalize_meeting_context(history: list[ChatTurn]) -> ContextFinalizeResponse:
+    llm = get_llm().with_structured_output(_FinalizeDraft)
+    transcript = "\n".join(f"{turn.role.value}: {turn.content}" for turn in history)
 
-    result: _ContextExtraction = await llm.ainvoke(
+    result: _FinalizeDraft = await llm.ainvoke(
         [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
+            {"role": "system", "content": FINALIZE_SYSTEM_PROMPT},
+            {"role": "user", "content": f"## 대화 전체\n{transcript}"},
         ]
     )
-
-    conflicts = [
-        UiConflict(
-            field=draft.field,
-            ui_value=_ui_value_for(draft.field, ui_inputs),
-            mentioned_value=draft.mentioned_value,
-            question=draft.question,
-        )
-        for draft in result.conflicts
-    ]
-    return MeetingContextResponse(
-        meeting_context=MeetingContext(
-            activity_hints=result.activity_hints,
-            meeting_tone=result.meeting_tone,
-            explicit_constraints=result.explicit_constraints,
-        ),
-        conflicts_with_ui=conflicts,
-    )
+    return ContextFinalizeResponse(reply=result.reply, purpose=result.purpose)

@@ -14,6 +14,6 @@ async def extract(payload: PreferenceExtractRequest) -> PreferenceExtractRespons
     result = await graph.ainvoke({"message": message})
 
     return PreferenceExtractResponse(
-        preferences=result.get("preferences", []),
+        extracted_preferences=result.get("preferences", []),
         reply=result.get("assistant_reply"),
     )

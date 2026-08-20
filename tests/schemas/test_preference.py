@@ -10,11 +10,11 @@ def test_preference_request_only_requires_current_submission_messages():
     assert request.model_dump(by_alias=True) == {"messages": ["매운 음식 좋아해"]}
 
 
-def test_preference_response_uses_reply_field_name():
+def test_preference_response_uses_reply_and_extracted_preferences_field_names():
     response = PreferenceExtractResponse(reply="말씀해주신 내용을 선호에 반영했어요.")
 
     assert response.model_dump(by_alias=True) == {
-        "preferences": [],
+        "extractedPreferences": [],
         "reply": "말씀해주신 내용을 선호에 반영했어요.",
     }
 

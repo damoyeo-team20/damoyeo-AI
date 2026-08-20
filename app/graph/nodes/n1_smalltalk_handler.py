@@ -7,26 +7,12 @@
 import logging
 
 from app.core.errors import AIServiceError
-from app.core.llm import get_llm
+from app.core.llm import extract_text_content, get_llm
 from app.graph.preference_state import PreferenceState
 from app.prompts.n1_smalltalk_handler import SYSTEM_PROMPT
 from app.services.vocabulary_client import VocabularyEntry, fetch_vocabulary
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and "text" in block:
-                parts.append(block["text"])
-        return "\n".join(parts)
-    return str(content)
 
 
 def _format_domains(vocabulary: list[VocabularyEntry]) -> str:
@@ -65,7 +51,7 @@ async def handle_smalltalk(state: PreferenceState) -> dict:
         ]
     )
 
-    return {"assistant_reply": _extract_text(response.content)}
+    return {"assistant_reply": extract_text_content(response.content)}
 
 
 async def acknowledge_preferences_only(state: PreferenceState) -> dict:

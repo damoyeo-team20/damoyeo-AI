@@ -43,7 +43,7 @@
 
 ```json
 {
-  "preferences": [
+  "extractedPreferences": [
     {
       "vocabularyCode": "ACTIVE_MEETUP",
       "displayName": "활동적인 모임",
@@ -97,7 +97,9 @@ LLM 호출 또는 structured output 파싱 실패에 대한 Back↔AI 공통 에
 
 **2.** ~~응답에 `displayName`, `domain`이 없다~~ → **반영 완료.** AI 서버가 캐시된 Vocabulary에서 `vocabularyCode`로 조회해 두 값을 붙인다. LLM 출력 항목에는 추가하지 않았으므로 토큰 비용이나 새 환각 위험은 없다.
 
-**3.** ~~필드명 `reply` vs `assistantReply`~~ → **`reply`로 통일 완료.** 의미가 같은 필드에 굳이 다른 이름을 쓰지 않고 백엔드 예시와 맞췄다. 선호 배열은 Back↔AI에서 `preferences`, Front↔Back에서 `extractedPreferences`로 아직 다르다. 이 배열 이름도 통일할지는 **백엔드 확인 필요**다.
+**3.** ~~필드명 `reply` vs `assistantReply`~~ → **`reply`로 통일 완료.** 의미가 같은 필드에 굳이 다른 이름을 쓰지 않고 백엔드 예시와 맞췄다 — Back이 가공 없이 그대로 Front에 전달(passthrough)하는 구조라 이름이 다르면 그대로 Front까지 노출되기 때문이다.
+
+**3-1.** ~~선호 배열명 `preferences` vs `extractedPreferences`~~ → **`extractedPreferences`로 통일 완료** (`api-design2.md` 12장에서 확정, `ExtractedPreference` 응답 모델에 반영). Back↔AI와 Front↔Back 양쪽 모두 같은 이름을 쓴다.
 
 **4.** ~~`reply`가 잡담이 섞였을 때만 채워진다~~ → **반영 완료.** 처음엔 "스몰톡 핸들러를 잡담 없어도 돌리자"로 접근했는데, 다시 보니 완료 통보와 스몰톡 반응은 생성 경로가 달라야 했다.
 
