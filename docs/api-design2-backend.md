@@ -208,6 +208,8 @@ AI는 상태를 저장하지 않는다 (LLM 호출 자체가 매번 독립적이
 
 ### 5.1 `POST /ai/meetings/{meetingId}/context/messages` — 채팅 한 턴
 
+이미 `/schedule`(6장)로 날짜가 확정된 뒤 이 화면에 들어온 경우, 화면에는 확정 날짜와 다른 후보 날짜들이 함께 표시된다. 사용자가 대화 중 "다른 날로 바꾸고 싶다"는 의사를 밝히면 이 API가 후보 중 하나로 바꿔준다 — 이를 위해 `candidateDates`를 선택 필드로 받는다.
+
 ### Request
 
 ```json
@@ -216,7 +218,11 @@ AI는 상태를 저장하지 않는다 (LLM 호출 자체가 매번 독립적이
     { "role": "USER", "content": "오랜만에 만나서 저녁 먹고 이야기하려고요" },
     { "role": "ASSISTANT", "content": "편안한 저녁 자리로 준비할게요. 원하시는 분위기가 있을까요?" }
   ],
-  "message": "너무 시끄러운 곳은 피하고 싶어요"
+  "message": "너무 시끄러운 곳은 피하고 싶어요",
+  "candidateDates": [
+    { "date": "2026-08-23", "selected": true },
+    { "date": "2026-08-30", "selected": false }
+  ]
 }
 ```
 
@@ -226,22 +232,41 @@ AI는 상태를 저장하지 않는다 (LLM 호출 자체가 매번 독립적이
 | `history[].role` | `USER \| ASSISTANT` | O | `meeting_chat_messages.role`과 동일 |
 | `history[].content` | `string` | O | 해당 턴의 원문 |
 | `message` | `string` | O | 이번 턴의 새 사용자 발화. 공백만 있으면 안 됨 |
+| `candidateDates` | `CandidateDate[] \| null` | X | 참여자 전원 가능 날짜 전체 + 현재 확정된 날짜 표시. `/schedule` 호출 전이라 확정 날짜가 없으면 아예 생략한다 |
+| `candidateDates[].date` | `date` | O | 후보 날짜 |
+| `candidateDates[].selected` | `boolean` | O | 지금 확정된 날짜인지 여부 |
+
+`candidateDates`를 보낼 경우: 최소 1개 이상, `date` 중복 불가, `selected: true`가 정확히 1개여야 한다. 어기면 `422 REQUEST_SCHEMA_INVALID`.
 
 ### Response `200`
 
 ```json
-{ "reply": "네, 조용한 곳으로 찾아볼게요. 더 말씀해주실 조건이 있을까요?" }
+{
+  "reply": "네, 조용한 곳으로 찾아볼게요. 더 말씀해주실 조건이 있을까요?",
+  "candidateDates": [
+    { "date": "2026-08-23", "selected": true },
+    { "date": "2026-08-30", "selected": false }
+  ]
+}
 ```
 
 | 필드 | 타입 | nullable | 설명 |
 | --- | --- | --- | --- |
 | `reply` | `string` | X | 사용자에게 표시할 대화형 답변 |
+| `candidateDates` | `CandidateDate[] \| null` | X | 요청에 `candidateDates`를 보냈을 때만 채워짐. 요청과 같은 리스트가 그대로 오되, 이번 턴에 날짜를 바꿨으면 `selected` 위치만 이동해서 온다 |
 
 이 단계에서는 `purpose`를 만들지 않는다. Back은 이번 턴의 `message`와 응답 `reply`를 각각 `USER`/`ASSISTANT` 행으로 `meeting_chat_messages`에 저장한다.
 
+날짜 변경 규칙:
+
+- 요청에 `candidateDates`가 없으면 AI는 날짜 변경 의도를 판단하지 않는다 — 응답은 지금과 동일하게 `reply`만 채워진다.
+- 요청에 `candidateDates`가 있어도, 이번 발화가 명확히 어떤 날짜인지 특정하지 못하면(예: "다른 날로 바꾸고 싶어"처럼 방향만 밝힌 경우) `selected`는 바뀌지 않고 `reply`가 "어떤 날짜로 바꿔드릴까요?"처럼 되묻는다. 다음 턴에서 사용자가 날짜를 특정하면(예: "30일로 해줘") 그때 `selected`가 이동한다.
+- 응답 `candidateDates`에서 새로 `selected: true`가 된 날짜는 항상 요청 `candidateDates`에 있던 값 중 하나다 — 목록 밖 날짜가 나올 수 없도록 AI가 응답 스키마 자체에서 강제한다.
+- `selected`가 바뀐 응답을 받으면 Back은 그 날짜에 대한 `resolvedStartAt`/`resolvedEndAt`을 다시 계산해서 저장해야 한다. 이 API는 날짜(`date`)만 돌려주고 시각은 돌려주지 않는다 — 원래 `/schedule` 확정 때 쓴 `preferredTimeOfDay`/`durationMinutes`를 그대로 적용해 6장의 `PreferredTimeOfDay` 규칙대로 계산하면 된다(AI를 다시 호출할 필요 없다).
+
 | HTTP | code | 발생 조건 | retryable |
 | --- | --- | --- | --- |
-| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락·타입 오류 또는 `message`가 공백뿐임 | `false` |
+| `422` | `REQUEST_SCHEMA_INVALID` | 필드 누락·타입 오류, `message`가 공백뿐임, 또는 `candidateDates`가 비었거나·중복이거나·`selected:true`가 1개가 아님 | `false` |
 | `503` | `MODEL_UNAVAILABLE` | LLM 호출 불가 | `true` |
 | `502` | `MODEL_RESPONSE_INVALID` | 모델 결과가 응답 스키마와 불일치 | `true` |
 

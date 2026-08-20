@@ -1,3 +1,4 @@
+from datetime import date
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -24,6 +25,25 @@ class ChatTurn(BaseModel):
     content: str
 
 
+class CandidateDate(BaseModel):
+    """참여자 전원 가능 날짜 후보 하나 + 지금 확정된 날짜인지 여부."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    date: date
+    selected: bool
+
+
+def _validate_candidate_dates(dates: list[CandidateDate]) -> list[CandidateDate]:
+    if not dates:
+        raise ValueError("candidateDates는 최소 1개 이상이어야 합니다.")
+    if len({c.date for c in dates}) != len(dates):
+        raise ValueError("candidateDates에 중복된 날짜가 있습니다.")
+    if sum(1 for c in dates if c.selected) != 1:
+        raise ValueError("candidateDates 중 selected:true는 정확히 1개여야 합니다.")
+    return dates
+
+
 class ContextMessageRequest(BaseModel):
     """`POST /ai/meetings/{meetingId}/context/messages` — 채팅 한 턴."""
 
@@ -32,6 +52,8 @@ class ContextMessageRequest(BaseModel):
     # 이전까지의 대화 전체. AI는 상태를 저장하지 않으므로 Back이 매번 통째로 다시 보낸다.
     history: list[ChatTurn] = Field(default_factory=list)
     message: str
+    # /schedule로 날짜가 이미 확정된 뒤에만 보낸다. 없으면 날짜 변경 의도를 판단하지 않는다.
+    candidate_dates: list[CandidateDate] | None = Field(default=None, alias="candidateDates")
 
     @field_validator("message")
     @classmethod
@@ -40,11 +62,22 @@ class ContextMessageRequest(BaseModel):
             raise ValueError("message는 공백일 수 없습니다.")
         return message
 
+    @field_validator("candidate_dates")
+    @classmethod
+    def _check_candidate_dates(
+        cls, dates: list[CandidateDate] | None
+    ) -> list[CandidateDate] | None:
+        if dates is None:
+            return dates
+        return _validate_candidate_dates(dates)
+
 
 class ContextMessageResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     reply: str
+    # 요청에 candidateDates가 있었을 때만 채워진다. 날짜를 바꿨으면 selected 위치만 이동해서 온다.
+    candidate_dates: list[CandidateDate] | None = Field(default=None, alias="candidateDates")
 
 
 class ContextFinalizeRequest(BaseModel):

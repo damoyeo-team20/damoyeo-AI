@@ -1,8 +1,9 @@
 from fastapi import APIRouter
 
 from app.core.errors import AIServiceError
+from app.graph.build_context_graph import get_context_graph
 from app.graph.build_graph import get_candidates_graph
-from app.graph.nodes.n2_context_parser import finalize_meeting_context, generate_context_reply
+from app.graph.nodes.n2_context_parser import finalize_meeting_context
 from app.graph.nodes.n3_schedule_resolver import resolve_schedule
 from app.schemas.candidates import (
     ActionRequired,
@@ -26,7 +27,15 @@ router = APIRouter(prefix="/ai/meetings/{meeting_id}", tags=["meetings"])
 async def context_message(
     meeting_id: int, payload: ContextMessageRequest
 ) -> ContextMessageResponse:
-    return await generate_context_reply(payload.history, payload.message)
+    graph = get_context_graph()
+    result = await graph.ainvoke(
+        {
+            "history": payload.history,
+            "message": payload.message,
+            "candidate_dates": payload.candidate_dates,
+        }
+    )
+    return ContextMessageResponse(reply=result["reply"], candidate_dates=result.get("candidate_dates"))
 
 
 @router.post("/context", response_model=ContextFinalizeResponse)
