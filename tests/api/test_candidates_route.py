@@ -198,6 +198,34 @@ def test_timeout_with_some_suggestions_still_returns_ok(monkeypatch):
     assert body["verificationTimedOut"] is True
 
 
+def test_unverified_suggestion_uses_existing_response_fields(monkeypatch):
+    suggestion = _suggestion().model_copy(
+        update={
+            "business_hours": None,
+            "business_hours_verified": False,
+            "open_at_meeting_time": None,
+        }
+    )
+    _stub_graph(
+        monkeypatch,
+        {
+            "suggestions": [suggestion],
+            "meeting_tags": [],
+            "verification_timed_out": True,
+        },
+    )
+
+    response = client.post("/ai/meetings/20/candidates", json=_payload())
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["status"] == "OK"
+    assert body["suggestions"][0]["businessHours"] is None
+    assert body["suggestions"][0]["businessHoursVerified"] is False
+    assert body["suggestions"][0]["openAtMeetingTime"] is None
+    assert body["verificationTimedOut"] is True
+
+
 def test_end_before_start_is_rejected(monkeypatch):
     _stub_graph(monkeypatch, {})
 

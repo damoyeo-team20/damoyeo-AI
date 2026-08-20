@@ -2,7 +2,8 @@
 
 후보 장소별 영업시간/휴무일을 병렬로 검증한다. 검증 범위는 영업시간·휴무일로만 한정한다
 (주차·웨이팅·가격 등은 다루지 않는다). PASS/FAIL/UNKNOWN 3-state를 유지하며, UNKNOWN을 임의로
-PASS/FAIL로 단정하지 않는다. 전체 타임아웃을 두고, 타임아웃 시 검증 완료분만 반환한다.
+PASS/FAIL로 단정하지 않는다. 전체 타임아웃을 두되, 시간 안에 검증하지 못한 후보도 UNKNOWN으로
+남겨 장소 후보 자체가 사라지지 않게 한다.
 
 날짜만이 아니라 `/schedule`이 확정한 실제 시각(confirmed_start_at~confirmed_end_at)에 영업하는지까지
 판정한다.
@@ -46,6 +47,26 @@ class _Classification(BaseModel):
     source: str | None = None
 
 
+def _to_verified_place(
+    place: PlaceCandidate, classification: _Classification
+) -> VerifiedPlace:
+    """검증 여부와 무관하게 Kakao 장소 정보는 보존한다."""
+    return {
+        "activity": place["activity"],
+        "kakao_place_id": place["kakao_place_id"],
+        "name": place["name"],
+        "address": place["address"],
+        "category": place["category"],
+        "place_url": place["place_url"],
+        "latitude": place["latitude"],
+        "longitude": place["longitude"],
+        "verification_status": classification.status,
+        "business_hours": classification.business_hours,
+        "verification_source": classification.source,
+        "checked_at": datetime.now(UTC),
+    }
+
+
 async def _verify_one(
     place: PlaceCandidate, date: str, start_time: str, end_time: str
 ) -> VerifiedPlace:
@@ -56,20 +77,7 @@ async def _verify_one(
         record_debug(  # TEMP DEBUG
             "n_candidate_place_verifier", {"place": place["name"], "skipped": True}
         )
-        return {
-            "activity": place["activity"],
-            "kakao_place_id": place["kakao_place_id"],
-            "name": place["name"],
-            "address": place["address"],
-            "category": place["category"],
-            "place_url": place["place_url"],
-            "latitude": place["latitude"],
-            "longitude": place["longitude"],
-            "verification_status": classification.status,
-            "business_hours": classification.business_hours,
-            "verification_source": classification.source,
-            "checked_at": datetime.now(UTC),
-        }
+        return _to_verified_place(place, classification)
     try:
         query = SEARCH_QUERY_TEMPLATE.format(place_name=place["name"], address=place["address"])
         results = await serper_search(query)
@@ -95,20 +103,7 @@ async def _verify_one(
             {"place": place["name"], "search_text": search_text, "classification": classification.model_dump()},
         )
 
-    return {
-        "activity": place["activity"],
-        "kakao_place_id": place["kakao_place_id"],
-        "name": place["name"],
-        "address": place["address"],
-        "category": place["category"],
-        "place_url": place["place_url"],
-        "latitude": place["latitude"],
-        "longitude": place["longitude"],
-        "verification_status": classification.status,
-        "business_hours": classification.business_hours,
-        "verification_source": classification.source,
-        "checked_at": datetime.now(UTC),
-    }
+    return _to_verified_place(place, classification)
 
 
 async def verify_places(state: CandidatesState) -> dict:
@@ -130,6 +125,18 @@ async def verify_places(state: CandidatesState) -> dict:
 
     for task in pending:
         task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+        logger.warning(
+            "영업 검증 시간 초과: %d개 후보를 UNKNOWN으로 유지합니다.", len(pending)
+        )
 
-    verified: list[VerifiedPlace] = [task.result() for task in done]
+    # 입력 순서를 유지한다. 완료된 결과는 그대로 사용하고, timeout된 후보는 장소 정보를 버리지
+    # 않은 채 UNKNOWN으로 복원한다. Ranker는 FAIL만 제외하므로 이 후보들도 추천 대상이 된다.
+    verified: list[VerifiedPlace] = [
+        task.result()
+        if task in done
+        else _to_verified_place(place, _Classification(status="UNKNOWN"))
+        for task, place in zip(tasks, places, strict=True)
+    ]
     return {"verified_places": verified, "verification_timed_out": bool(pending)}

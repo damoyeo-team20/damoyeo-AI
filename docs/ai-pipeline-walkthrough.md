@@ -260,7 +260,7 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
    > 원래는 Gemini의 `google_search` grounding 도구로 이 단계까지 LLM이 직접 검색했지만, grounding이 일반 텍스트 생성과 별도의 훨씬 빡빡한 할당량을 갖고 있어 자주 `429`가 나서 검색만 Serper로 분리했습니다(2026-08-21). 판정 단계는 원래부터 grounding과 무관한 일반 Gemini 호출이라 그대로입니다.
 2. **판정**: 검색 결과 텍스트만 근거로 구조화 출력 `{status, businessHours, source}` 생성(`CLASSIFY_SYSTEM_PROMPT`, 기존과 동일). `status`는 `PASS`(그 시간대가 영업시간 안)/`FAIL`(휴무 또는 시간대 벗어남)/`UNKNOWN`(정보 부족) 3-state. **`UNKNOWN`을 임의로 `PASS`/`FAIL`로 단정하지 않습니다.**
 
-20초 안에 못 끝난 작업은 취소되고 결과에서 빠지며(`verification_timed_out=true`), 검색/판정 중 예외가 나면 해당 장소는 `UNKNOWN`으로 남습니다. `app/core/config.py`의 `SKIP_BUSINESS_HOURS_VERIFICATION` 플래그가 켜져 있으면 검색·판정을 아예 생략하고 즉시 `UNKNOWN`을 반환합니다(빠른 로컬 테스트용).
+20초 안에 못 끝난 작업은 취소하지만 장소 후보 자체는 버리지 않고 `UNKNOWN`으로 복원하며(`verification_timed_out=true`), 검색/판정 중 예외가 나도 해당 장소는 `UNKNOWN`으로 남습니다. 따라서 영업시간을 확인하지 못했다는 이유만으로 추천 후보가 사라지지 않습니다. `app/core/config.py`의 `SKIP_BUSINESS_HOURS_VERIFICATION` 플래그가 켜져 있으면 검색·판정을 아예 생략하고 즉시 `UNKNOWN`을 반환합니다(빠른 로컬 테스트용).
 
 ### 4.4 Candidate Ranker
 
