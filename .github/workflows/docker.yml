@@ -1,0 +1,47 @@
+name: Docker Build & Publish
+
+# PR에서는 빌드만 해서 Dockerfile이 깨졌는지 확인하고, main에 머지되면 실제로
+# ghcr.io에 푸시한다. arm64 Mac(Apple Silicon)에서도 그대로 받아쓸 수 있도록
+# amd64/arm64 두 아키텍처를 함께 빌드한다 — damoyeo-be 이미지가 amd64로만
+# 빌드돼서 겪었던 문제를 여기서는 반복하지 않기 위함.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  IMAGE: ghcr.io/damoyeo-team20/damoyeo-ai
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

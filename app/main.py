@@ -39,7 +39,9 @@ def handle_ai_service_error(request: Request, exc: AIServiceError) -> JSONRespon
 
 @app.exception_handler(RequestValidationError)
 def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    # FastAPI 기본 {"detail": [...]} 대신 공통 에러 포맷으로 통일한다.
+    # FastAPI 기본 {"detail": [...]} 대신 공통 에러 포맷으로 통일하되, 어떤 필드가 왜 틀렸는지는
+    # 응답에 노출하지 않고 서버 로그에만 남긴다 — 원인 파악용.
+    logger.warning("REQUEST_SCHEMA_INVALID %s %s: %s", request.method, request.url.path, exc.errors())
     return _error_response(
         422, "REQUEST_SCHEMA_INVALID", "요청 필드가 계약과 일치하지 않습니다.", retryable=False
     )

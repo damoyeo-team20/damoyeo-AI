@@ -24,7 +24,7 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health >/dev/null || exit 1"]
-      interval: 5s
+      interval: 1m
       timeout: 5s
       retries: 12
       start_period: 20s
@@ -45,10 +45,12 @@ services:
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-damoyeo-ai}
     ports:
+      # TODO: 임시로 전체 공개 — 원래는 127.0.0.1로만 바인딩해서 Back만 접근하게 해야 한다.
+      # 잠깐 쓰고 정리할 예정이라 되돌려둠 (2026-08-20, 호찬 요청).
       - "${AI_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
-      interval: 5s
+      interval: 1m
       timeout: 5s
       retries: 12
       start_period: 10s
@@ -62,12 +64,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-damoyeo}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-damoyeo}
     ports:
+      # TODO: 임시로 전체 공개 — 기본 비밀번호(damoyeo/damoyeo)라 원래는 127.0.0.1만 허용해야 한다.
+      # 잠깐 쓰고 정리할 예정이라 되돌려둠 (2026-08-20, 호찬 요청).
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - damoyeo-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
+      interval: 1m
       timeout: 5s
       retries: 10
     restart: unless-stopped
