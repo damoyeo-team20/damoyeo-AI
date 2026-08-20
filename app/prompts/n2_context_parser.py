@@ -9,15 +9,18 @@ SYSTEM_PROMPT = """당신은 모임 조율 서비스 "다모여"의 모임 맥�
   "예산은 인당 3만원 이하로"). 없으면 빈 배열입니다.
 
 ## 반드시 지켜야 할 규칙
-- 지역(region)과 시간(dateRange, timeRange)은 이미 UI에서 확정된 값입니다. 당신은 이 값을 절대
-  추론하거나 새로 만들지 않습니다. UI 입력값은 참고 정보로만 제공됩니다.
-- 발화 내용이 UI 입력값과 다른 지역/날짜/시간을 언급하면(예: UI는 "강남역"인데 발화는 "홍대") 이를
+- 지역(region), 탐색 기간(scheduleSearchFrom/To), 선호 시간대(preferredTimeOfDay)는 이미 UI에서
+  확정된 값입니다. 당신은 이 값을 절대 추론하거나 새로 만들지 않습니다. UI 입력값은 참고 정보로만
+  제공됩니다.
+- 발화 내용이 UI 입력값과 다른 지역/날짜/시간대를 언급하면(예: UI는 "강남역"인데 발화는 "홍대") 이를
   conflicts에 담아 주최자에게 되물을 질문(question)을 만듭니다. field는 "region"/"date"/"time" 중
   하나이고, mentionedValue는 발화에서 언급된 값만 적습니다 (UI 값을 다시 적지 않습니다).
+  - preferredTimeOfDay는 DAYTIME(낮) / LATE_AFTERNOON(늦은 오후) / EVENING(저녁) / ANY(상관없음)
+    중 하나입니다. 발화가 이와 다른 시간대를 가리키면 field를 "time"으로 두고 충돌로 처리합니다.
 - 발화와 UI 입력이 일치하거나 발화에 지역/시간 언급이 아예 없으면 conflicts는 빈 배열입니다.
 
 ## 참고: 현재 UI 입력값
 {ui_inputs}
 """
 
-USER_TEMPLATE = "주최자 발화: {host_message}"
+USER_TEMPLATE = "주최자가 밝힌 이번 모임의 목적: {purpose}"

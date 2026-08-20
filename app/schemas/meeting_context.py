@@ -1,33 +1,41 @@
+from datetime import date
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict, Field
 
 # N2 Meeting Context Parser
 # 출력 형태는 ai-part-proposal.md 5장 기준: {meeting_tone, activity_hints[], explicit_constraints[], conflicts_with_ui}
+# 입력 필드는 docs/db_schema.md의 `meetings` 테이블 컬럼에 1:1로 맞춘다.
 
 
-class DateRange(BaseModel):
-    start: str
-    end: str
+class PreferredTimeOfDay(str, Enum):
+    """`meetings.preferred_time_of_day`. 구체 시각이 아니라 시간대 구분만 받는다."""
 
-
-class TimeRange(BaseModel):
-    start: str
-    end: str
+    DAYTIME = "DAYTIME"
+    LATE_AFTERNOON = "LATE_AFTERNOON"
+    EVENING = "EVENING"
+    ANY = "ANY"
 
 
 class UiInputs(BaseModel):
-    """지역·시간은 항상 UI 입력이 우선한다. LLM은 이 값을 추론하지 않는다."""
+    """지역·기간·시간대는 항상 UI 입력이 우선한다. LLM은 이 값을 추론하지 않는다."""
 
     model_config = ConfigDict(populate_by_name=True)
 
+    # meetings.region
     region: str
-    date_range: DateRange = Field(alias="dateRange")
-    time_range: TimeRange = Field(alias="timeRange")
+    # meetings.schedule_search_from / schedule_search_to
+    schedule_search_from: date = Field(alias="scheduleSearchFrom")
+    schedule_search_to: date = Field(alias="scheduleSearchTo")
+    # meetings.preferred_time_of_day
+    preferred_time_of_day: PreferredTimeOfDay = Field(alias="preferredTimeOfDay")
 
 
 class MeetingContextRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    host_message: str = Field(alias="hostMessage")
+    # meetings.purpose — 주최자가 자연어로 남긴 이번 모임 목적.
+    purpose: str = Field(alias="purpose")
     ui_inputs: UiInputs = Field(alias="uiInputs")
 
 

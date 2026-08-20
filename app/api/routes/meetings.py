@@ -12,18 +12,19 @@ router = APIRouter(prefix="/ai/meetings/{meeting_id}", tags=["meetings"])
 
 @router.post("/context", response_model=MeetingContextResponse)
 async def parse_context(
-    meeting_id: str, payload: MeetingContextRequest
+    meeting_id: int, payload: MeetingContextRequest
 ) -> MeetingContextResponse:
-    return await parse_meeting_context(payload.host_message, payload.ui_inputs)
+    return await parse_meeting_context(payload.purpose, payload.ui_inputs)
 
 
 @router.post("/candidates", response_model=CandidatesResponse)
-async def get_candidates(meeting_id: str, payload: CandidatesRequest) -> CandidatesResponse:
+async def get_candidates(meeting_id: int, payload: CandidatesRequest) -> CandidatesResponse:
     graph = get_candidates_graph()
     result = await graph.ainvoke(
         {
             "confirmed_slot": payload.confirmed_slot,
             "region": payload.region,
+            "purpose": payload.purpose,
             "meeting_context": payload.meeting_context,
             "participant_preferences": payload.participant_preferences,
             "blocked_domains": payload.blocked_domains,
@@ -40,6 +41,7 @@ async def get_candidates(meeting_id: str, payload: CandidatesRequest) -> Candida
 
     return CandidatesResponse(
         status=CandidatesStatus.OK,
+        meeting_tags=result.get("meeting_tags", []),
         candidates=result.get("final_candidates", []),
         excluded=result.get("excluded", []),
         verification_timed_out=result.get("verification_timed_out", False),
@@ -47,5 +49,5 @@ async def get_candidates(meeting_id: str, payload: CandidatesRequest) -> Candida
 
 
 @router.post("/revise", response_model=ReviseResponse)
-async def revise(meeting_id: str, payload: ReviseRequest) -> ReviseResponse:
+async def revise(meeting_id: int, payload: ReviseRequest) -> ReviseResponse:
     return await route_revision(payload.feedback, payload.current_candidates)

@@ -14,6 +14,8 @@ class KakaoPlace(BaseModel):
     name: str
     address: str
     category: str
+    # 장소 상세페이지 URL. 응답의 place_url 필드.
+    place_url: str | None = None
 
 
 async def search_places(keyword: str, region: str, size: int = 5) -> list[KakaoPlace]:
@@ -44,6 +46,7 @@ async def search_places(keyword: str, region: str, size: int = 5) -> list[KakaoP
             name=doc["place_name"],
             address=doc.get("road_address_name") or doc["address_name"],
             category=doc.get("category_name", ""),
+            place_url=doc.get("place_url"),
         )
         for doc in documents
     ]

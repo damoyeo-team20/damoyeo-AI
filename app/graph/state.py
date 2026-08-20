@@ -6,7 +6,15 @@ L3(시간 교집합)와 L9(캘린더 등록)는 이 저장소의 담당 범위�
 
 from typing import TypedDict
 
-from app.schemas.candidates import Candidate, ConfirmedSlot, ConflictInfo, ExcludedActivity, ParticipantPreference
+from app.schemas.candidates import (
+    Candidate,
+    ConfirmedSlot,
+    ConflictInfo,
+    ExcludedActivity,
+    ParticipantPreference,
+    Tag,
+)
+from app.schemas.meeting_context import MeetingContext
 
 
 class ActivityPlan(TypedDict):
@@ -22,6 +30,7 @@ class PlaceCandidate(TypedDict):
     name: str
     address: str
     category: str
+    place_url: str | None
 
 
 class VerifiedPlace(TypedDict):
@@ -30,6 +39,7 @@ class VerifiedPlace(TypedDict):
     name: str
     address: str
     category: str
+    place_url: str | None
     verification_status: str
     verification_evidence: str | None
     verification_source: str | None
@@ -40,7 +50,9 @@ class CandidatesState(TypedDict, total=False):
     # 입력
     confirmed_slot: ConfirmedSlot
     region: str
-    meeting_context: dict
+    # meetings.purpose — 주최자 요청 원문. CONFLICT 응답의 hostRequest로 되돌려준다.
+    purpose: str | None
+    meeting_context: MeetingContext
     participant_preferences: list[ParticipantPreference]
     blocked_domains: list[str]
 
@@ -48,6 +60,7 @@ class CandidatesState(TypedDict, total=False):
     activities: list[ActivityPlan]
     excluded: list[ExcludedActivity]
     conflict: ConflictInfo | None
+    meeting_tags: list[Tag]
 
     # L5 산출물
     place_candidates: list[PlaceCandidate]

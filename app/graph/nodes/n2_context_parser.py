@@ -35,16 +35,14 @@ def _ui_value_for(field: str, ui_inputs: UiInputs) -> str:
     if field == "region":
         return ui_inputs.region
     if field == "date":
-        return f"{ui_inputs.date_range.start} ~ {ui_inputs.date_range.end}"
-    return f"{ui_inputs.time_range.start} ~ {ui_inputs.time_range.end}"
+        return f"{ui_inputs.schedule_search_from} ~ {ui_inputs.schedule_search_to}"
+    return ui_inputs.preferred_time_of_day.value
 
 
-async def parse_meeting_context(
-    host_message: str, ui_inputs: UiInputs
-) -> MeetingContextResponse:
+async def parse_meeting_context(purpose: str, ui_inputs: UiInputs) -> MeetingContextResponse:
     llm = get_llm().with_structured_output(_ContextExtraction)
-    system = SYSTEM_PROMPT.format(ui_inputs=ui_inputs.model_dump(by_alias=True))
-    user = USER_TEMPLATE.format(host_message=host_message)
+    system = SYSTEM_PROMPT.format(ui_inputs=ui_inputs.model_dump(by_alias=True, mode="json"))
+    user = USER_TEMPLATE.format(purpose=purpose)
 
     result: _ContextExtraction = await llm.ainvoke(
         [

@@ -63,6 +63,7 @@ async def _verify_one(place: PlaceCandidate, date: str) -> VerifiedPlace:
         "name": place["name"],
         "address": place["address"],
         "category": place["category"],
+        "place_url": place["place_url"],
         "verification_status": classification.status,
         "verification_evidence": classification.evidence,
         "verification_source": classification.source,

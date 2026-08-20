@@ -11,11 +11,16 @@ from app.core.errors import AIServiceError
 
 
 class VocabularyEntry(BaseModel):
+    """`preference_vocabulary` 테이블 1행에 대응 (docs/db_schema.md).
+
+    스키마에 `attribute` 컬럼은 없다. 계층은 `parent_code` 하나로만 표현한다.
+    """
+
     model_config = ConfigDict(populate_by_name=True)
 
     code: str
     domain: str
-    attribute: str
+    display_name: str = Field(alias="displayName")
     parent_code: str | None = Field(default=None, alias="parentCode")
 
 

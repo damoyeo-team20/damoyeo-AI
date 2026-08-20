@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 from app.core.llm import get_llm
 from app.graph.state import ActivityPlan, CandidatesState
 from app.prompts.n4_activity_decider import SYSTEM_PROMPT
-from app.schemas.candidates import ConflictInfo, ExcludedActivity
+from app.schemas.candidates import ConflictInfo, ExcludedActivity, MeetingTag, to_meeting_tag
+from app.schemas.meeting_context import MeetingContext
 
 
 class _ActivityDraft(BaseModel):
@@ -29,6 +30,8 @@ class _ActivityDecision(BaseModel):
     status: Literal["OK", "CONFLICT"]
     activities: list[_ActivityDraft] = Field(default_factory=list)
     excluded: list[_ExcludedDraft] = Field(default_factory=list)
+    # 확실히 해당하는 것만 담는다. 근거가 없으면 빈 배열이 정상 — 억지로 채우지 않는다.
+    meeting_tags: list[MeetingTag] = Field(default_factory=list)
     conflict_reason: str | None = None
     conflicting_preferences: list[str] = Field(default_factory=list)
 
@@ -36,9 +39,12 @@ class _ActivityDecision(BaseModel):
 async def decide_activities(state: CandidatesState) -> dict:
     llm = get_llm().with_structured_output(_ActivityDecision)
 
+    meeting_context = state.get("meeting_context") or MeetingContext()
+
     system = SYSTEM_PROMPT.format(
-        meeting_context=state.get("meeting_context", {}),
-        confirmed_slot=state["confirmed_slot"].model_dump(by_alias=True),
+        purpose=state.get("purpose") or "(명시되지 않음)",
+        meeting_context=meeting_context.model_dump(by_alias=True),
+        confirmed_slot=state["confirmed_slot"].model_dump(by_alias=True, mode="json"),
         region=state["region"],
         blocked_domains=state.get("blocked_domains", []),
         participant_preferences=[
@@ -56,12 +62,16 @@ async def decide_activities(state: CandidatesState) -> dict:
         return {
             "conflict": ConflictInfo(
                 reason=result.conflict_reason or "주최자 요청과 참여자 선호가 충돌합니다.",
-                host_request=state.get("meeting_context", {}).get("notes", "") or "",
+                host_request=state.get("purpose") or "",
                 conflicting_preferences=result.conflicting_preferences,
             ),
             "activities": [],
             "excluded": excluded,
+            "meeting_tags": [],
         }
+
+    # dict.fromkeys로 순서를 지키면서 중복만 제거한다.
+    meeting_tags = [to_meeting_tag(t) for t in dict.fromkeys(result.meeting_tags)]
 
     activities: list[ActivityPlan] = [
         {
@@ -71,4 +81,9 @@ async def decide_activities(state: CandidatesState) -> dict:
         }
         for a in result.activities
     ]
-    return {"activities": activities, "excluded": excluded, "conflict": None}
+    return {
+        "activities": activities,
+        "excluded": excluded,
+        "conflict": None,
+        "meeting_tags": meeting_tags,
+    }

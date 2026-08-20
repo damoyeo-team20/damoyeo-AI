@@ -29,6 +29,7 @@ async def search_places(state: CandidatesState) -> dict:
                         "name": place.name,
                         "address": place.address,
                         "category": place.category,
+                        "place_url": place.place_url,
                     }
                 )
         place_candidates.extend(activity_places[:_TOP_N_PER_ACTIVITY])
