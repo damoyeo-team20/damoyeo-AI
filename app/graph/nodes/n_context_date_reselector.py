@@ -36,7 +36,7 @@ async def reselect_date(state: ContextChatState) -> dict:
 
     history = state.get("history", [])
     transcript = "\n".join(f"{turn.role.value}: {turn.content}" for turn in history)
-    candidates_text = ", ".join(c.date.isoformat() for c in candidate_dates)
+    candidates_text = ", ".join(c.date.strftime("%Y-%m-%d (%A)") for c in candidate_dates)
 
     user = (
         f"## 지금까지 대화\n{transcript}\n\n"

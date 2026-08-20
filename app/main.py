@@ -23,6 +23,7 @@ app.include_router(api_router)
 # 새 JSON 키를 만들지 않는다 — 백엔드가 모르는 필드가 생기면 파싱이 깨질 수 있어서, 이미 있는
 # 문자열 필드(reply/reason/summary/message) 뒤에 "[DEBUG: ...]"를 그대로 이어붙이기만 한다.
 _DEBUG_TEXT_KEYS = ("reply", "reason", "summary", "message")
+_EXPOSE_DEBUG_IN_RESPONSE = False
 
 
 def _append_debug_text(obj: dict, trace_text: str) -> None:
@@ -55,7 +56,7 @@ async def inject_debug_trace(request: Request, call_next):
 
     if isinstance(payload, dict):
         trace = get_debug_trace()
-        if trace:
+        if _EXPOSE_DEBUG_IN_RESPONSE and trace:
             trace_text = json.dumps(trace, default=str, ensure_ascii=False)
             _append_debug_text(payload, trace_text)
         body = json.dumps(payload, default=str, ensure_ascii=False).encode("utf-8")
@@ -100,7 +101,7 @@ def handle_validation_error(request: Request, exc: RequestValidationError) -> JS
     # 원래 메시지("요청 필드가 계약과 일치하지 않습니다.")로 되돌린다.
     detail = json.dumps(exc.errors(), default=str, ensure_ascii=False)
     return _error_response(
-        422, "REQUEST_SCHEMA_INVALID", f"요청 필드가 계약과 일치하지 않습니다. [DEBUG: {detail}]", retryable=False
+        422, "REQUEST_SCHEMA_INVALID", f"요청 필드가 계약과 일치하지 않습니다. [DEBUG: {detail}]" if _EXPOSE_DEBUG_IN_RESPONSE else "요청 필드가 계약과 일치하지 않습니다.", retryable=False
     )
 
 
@@ -112,7 +113,7 @@ def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
     # TEMP DEBUG: 실제 예외를 응답 message에도 남긴다. 배포 전에 str(exc) 부분 제거.
     detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return _error_response(
-        500, "INTERNAL_ERROR", f"예기치 못한 오류가 발생했습니다. [DEBUG: {exc!r}\n{detail}]", retryable=False
+        500, "INTERNAL_ERROR", f"예기치 못한 오류가 발생했습니다. [DEBUG: {exc!r}\n{detail}]" if _EXPOSE_DEBUG_IN_RESPONSE else "예기치 못한 오류가 발생했습니다.", retryable=False
     )
 
 
