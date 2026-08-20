@@ -60,7 +60,30 @@ flowchart LR
 
 ### AI 파이프라인
 
-파일명은 `{n|l}_{도메인}_{역할}.py` 규칙을 따릅니다. `n_`은 LLM 노드, `l_`은 비-LLM(결정론적) 노드이고, 도메인 단어(`preference`/`context`/`schedule`/`candidate`)는 실제 API 경로와 그대로 맞춥니다 — 번호는 쓰지 않습니다. 지금 3개 API(엔드포인트)로 나뉘어 있고, 그래프 엣지로 실제 순서가 이어지는 곳은 `/candidates` 하나뿐입니다. **날짜 교집합 계산, 시간 슬롯 계산, 후보 코드 필터링처럼 "정답이 하나로 정해지는 계산"은 전부 코드가 하고, LLM은 자연어 이해·판단·설명에만 쓰입니다.** LLM이 목록 밖의 값(존재하지 않는 날짜, Vocabulary에 없는 코드 등)을 답하지 못하도록 응답 스키마 자체를 `Literal`로 동적 제약하는 것이 파이프라인 전반의 핵심 안전장치입니다.
+파일명은 `{n|l}_{도메인}_{역할}.py` 규칙을 따릅니다. `n_`은 LLM 노드, `l_`은 비-LLM(결정론적) 노드이고, 도메인 단어(`preference`/`context`/`schedule`/`candidate`)는 실제 API 경로와 그대로 맞춥니다 — 번호는 쓰지 않습니다. 기능별 API로 나뉘어 있으며, 각 요청 안에서 필요한 분기·검증만 그래프로 처리합니다. **날짜 교집합 계산, 시간 슬롯 계산, 후보 코드 필터링처럼 "정답이 하나로 정해지는 계산"은 전부 코드가 하고, LLM은 자연어 이해·판단·설명에만 쓰입니다.** LLM이 목록 밖의 값(존재하지 않는 날짜, Vocabulary에 없는 코드 등)을 답하지 못하도록 응답 스키마 자체를 `Literal`로 동적 제약하는 것이 파이프라인 전반의 핵심 안전장치입니다.
+
+```mermaid
+flowchart LR
+    subgraph PREP["컨텍스트 준비"]
+        P["개인 선호 구조화<br/>/preferences/extract"]
+        C["목적 대화·요약<br/>/context/messages · /context"]
+        S["날짜·시간 확정<br/>/schedule"]
+    end
+
+    P --> G["그룹 컨텍스트"]
+    C --> G
+    S --> G
+
+    subgraph DECISION["후보 생성 · /candidates"]
+        G --> A["활동 계획"]
+        A --> V["장소 검색·검증"]
+        V --> R["랭킹·설명"]
+    end
+
+    R --> O["최종 후보 3개"]
+```
+
+#### 상세 파이프라인
 
 ```mermaid
 flowchart TD
@@ -76,23 +99,23 @@ flowchart TD
         A1 -->|선호만 있음| A4["고정 완료 문구"]:::code
     end
 
-    subgraph EP2["POST /ai/meetings/id/context/messages"]
+    subgraph EP2["POST /ai/meetings/{meetingId}/context/messages"]
         direction TB
         B1["Router\n날짜 변경 의사 분류"]:::llm
         B1 -->|일반 대화| B2["Context Parser\n대화형 응답 생성"]:::llm
         B1 -->|날짜 변경 의사| B3["Date Reselector\n후보 중 재선택"]:::llm
     end
 
-    subgraph EP3["POST /ai/meetings/id/context"]
+    subgraph EP3["POST /ai/meetings/{meetingId}/context"]
         C1["Context Parser (finalize)\n대화 전체 → purpose 한 문장"]:::llm
     end
 
-    subgraph EP4["POST /ai/meetings/id/schedule"]
+    subgraph EP4["POST /ai/meetings/{meetingId}/schedule"]
         direction TB
         D1["Schedule Resolver\n후보 날짜 중 하루 선택"]:::llm --> D2["Slot Builder\n시작/종료 시각 계산"]:::code
     end
 
-    subgraph EP5["POST /ai/meetings/id/candidates"]
+    subgraph EP5["POST /ai/meetings/{meetingId}/candidates"]
         direction TB
         E1["Activity Decider\n활동·태그 결정"]:::llm
         E1 -->|정상| E2["Place Search (Kakao)"]:::code
