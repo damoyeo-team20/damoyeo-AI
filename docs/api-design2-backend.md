@@ -338,7 +338,7 @@ AI는 상태를 저장하지 않는다 (LLM 호출 자체가 매번 독립적이
 - 두 시각의 차이는 정확히 `durationMinutes`(`null`이면 120분)다.
 - `durationMinutes`가 선택한 시간대 범위(아래 PreferredTimeOfDay)보다 길면 `400 INVALID_DURATION_FOR_TIME_OF_DAY`를 반환한다.
 
-Back은 이 응답을 검증한 뒤 `meetings.confirmed_start_at`/`confirmed_end_at`에 저장하고, 위 조건을 어긴 응답을 받으면 Front에 `502 AI_RESPONSE_INVALID`로 변환해 반환한다.
+Back은 이 응답을 검증한 뒤 저장하고, 위 조건을 어긴 응답을 받으면 Front에 `502 AI_RESPONSE_INVALID`로 변환해 반환한다. 실제 DB를 열어보니 `meetings`에 `resolved_start_at`/`resolved_end_at`과 `confirmed_start_at`/`confirmed_end_at`이 별도 컬럼으로 있다 — 이름이 이 API의 `resolvedStartAt`/`resolvedEndAt`과 정확히 대응되는 걸 보면, `/schedule` 응답은 일단 `resolved_*`에 pending으로 저장되고 `/candidates` 결과 중 하나를 사용자가 최종 확정해야 `confirmed_*`로 넘어가는 2단계 구조로 보인다 (`meetings.confirmed_suggestion_id`가 `meeting_suggestions`를 가리키는 것도 이 해석과 맞는다). 다만 이건 컬럼명에서 유추한 것이라 실제 흐름은 9장에서 백엔드 팀 확인이 필요하다.
 
 | HTTP | code | 발생 조건 | retryable |
 | --- | --- | --- | --- |
@@ -607,7 +607,8 @@ API의 큰 경계와 필드는 정의할 수 있지만 다음 정책은 팀 합�
 6. **사용자 결정 필요 결과의 Back 상태 매핑**: AI의 `CONFLICT`, `NO_CANDIDATE`를 Back의 run·meeting 상태와 Front 화면에 어떻게 연결할지 Back 계약에서 정해야 한다.
 7. **자연어 입력 상한**: `messages`, `meetingMemory`의 최대 개수와 글자 수는 모델 비용·timeout 기준을 정한 뒤 확정해야 한다.
 8. **`commonAvailableDates` 데이터 원천**: Back이 교집합을 어느 저장소 또는 Calendar 결과에서 계산할지는 Back 내부 설계다.
-9. **재생성 시 `excludedExternalPlaceIds` 누적 저장소**: Back이 "지금까지 모든 generation에서 보여준 `externalPlaceId`"를 어디에 쌓아둘지는 AI 계약과 무관한 Back 내부 설계다 — AI는 상태를 저장하지 않으므로 Back이 매 `/candidates` 호출마다 완성된 목록을 보내주기만 하면 된다. `db_schema.md`의 "아직 구현되지 않은 테이블" 목록에 있는 `meeting_suggestions`가 이 역할을 할 것으로 보이지만 스키마가 아직 공유되지 않았다. 같은 목록의 `revision_requests`는 `/revise` 제거로 더 이상 필요 없을 가능성이 높다 — 확인 필요.
+9. ~~**재생성 시 `excludedExternalPlaceIds` 누적 저장소**~~ → **확인 완료.** 로컬 docker-compose DB(Flyway 마이그레이션 적용됨)를 직접 열어보니 `meeting_suggestions`가 실제로 존재한다. `(meeting_id, generation, external_place_id)` 유니크 제약과 `generation` 컬럼(정수)이 있어, 재생성마다 새 `generation`으로 쌓고 Back이 같은 `meeting_id`의 모든 generation에서 `external_place_id`를 모아 `excludedExternalPlaceIds`를 구성하는 구조로 보인다. `db_schema.md`가 "아직 구현되지 않은 테이블"로 표시한 건 그 문서가 갱신되지 않은 것뿐이다. `revision_requests`는 이 DB에 아예 존재하지 않는다 — `/revise` 제거와 함께 실제로 빠진 것으로 보인다.
+10. **`meetings`의 `resolved_*` vs `confirmed_*` 시간 컬럼**: 실제 DB에 `resolved_start_at`/`resolved_end_at`과 `confirmed_start_at`/`confirmed_end_at`이 둘 다 있고, `confirmed_suggestion_id`(→ `meeting_suggestions`)도 있다. `/schedule` 응답은 `resolved_*`에 pending으로 저장되고, `/candidates` 결과 중 사용자가 하나를 고르면 그때 `confirmed_*`와 `confirmed_suggestion_id`가 채워지는 흐름으로 추정되지만 컬럼명에서 유추한 것일 뿐 Back 쪽 확정 흐름은 아니다 — 백엔드 팀 확인 필요.
 
 ---
 
