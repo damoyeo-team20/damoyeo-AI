@@ -526,8 +526,8 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 | `suggestions[].externalUrl` | `URI \| null` | O | 장소 상세 URL |
 | `suggestions[].proposedStartAt` | `datetime` | X | 요청의 `confirmedSlot.confirmedStartAt`과 동일 |
 | `suggestions[].proposedEndAt` | `datetime` | X | 요청의 `confirmedSlot.confirmedEndAt`과 동일 |
-| `suggestions[].businessHours` | `string \| null` | O | 표시용 영업시간 |
-| `suggestions[].businessHoursVerified` | `boolean` | X | 영업시간 확인 여부 |
+| `suggestions[].businessHours` | `string \| null` | O | 표시용 영업시간 문구. **참고용 텍스트일 뿐 신뢰 신호가 아니다** — `businessHoursVerified`와 독립적으로 채워지므로, 아래 규칙 참고 |
+| `suggestions[].businessHoursVerified` | `boolean` | X | 영업시간 확인 여부. **신뢰 여부는 이 필드로만 판단한다** |
 | `suggestions[].openAtMeetingTime` | `boolean \| null` | O | 제안 시각 영업 여부. 미확인이면 `null` |
 | `suggestions[].matchedPreferenceDomains` | `string[]` | X | 선정에 기여한 Vocabulary domain |
 | `suggestions[].reasons` | `string[]` | X | 그룹 수준 선정 사유 (문장) |
@@ -596,7 +596,7 @@ Back worker가 일정·참여자·개인 선호·과거 모임 요약을 전달�
 - 각 후보의 `reasons`와 `sourceUrls`는 최소 1개다.
 - 확인 결과 폐점인 장소는 반환하지 않는다.
 - 영업 확인 완료 시 `businessHoursVerified=true`, `businessHours!=null`, `openAtMeetingTime=true`다.
-- 영업 확인 불가 시 `businessHoursVerified=false`, `openAtMeetingTime=null`일 수 있다.
+- 영업 확인 불가 시 `businessHoursVerified=false`, `openAtMeetingTime=null`일 수 있다. **이때도 `businessHours`는 `null`이 아닐 수 있다** — 검색 중 참고할 만한 문구를 찾았지만 제안 시각에 실제로 영업하는지까지는 확신하지 못한 경우다. `businessHours`와 `businessHoursVerified`는 서로 독립적인 필드이므로, `businessHours`가 채워져 있다고 해서 확인됐다고 해석하면 안 된다 — 신뢰 여부는 반드시 `businessHoursVerified`/`openAtMeetingTime`으로만 판단한다. Front는 `businessHoursVerified=false`일 때 `businessHours` 옆에 "확인 안 됨" 같은 표시를 붙이는 걸 권장한다.
 - `matchedPreferenceDomains`는 요청의 Vocabulary code에서 파생된 값이다.
 - timeout 후 후보가 1개 이상이면 `OK`와 `verificationTimedOut=true`, 하나도 없으면 `504`를 반환한다.
 - `NO_CANDIDATE`, `CONFLICT`는 시스템 오류가 아니므로 HTTP `200`으로 반환한다.

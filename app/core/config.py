@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     # External APIs
     kakao_rest_api_key: str = ""
+    # 영업시간 검증(Place Verifier)의 웹 검색에 사용. Gemini google_search grounding이 별도의
+    # 빡빡한 할당량 때문에 막혀서, 검색만 Serper(https://serper.dev)로 분리했다.
+    serper_api_key: str = ""
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
 
@@ -26,8 +29,7 @@ class Settings(BaseSettings):
     # DB (AI 서비스가 직접 소유하는 preference_vocabulary 등)
     database_url: str = "postgresql+asyncpg://localhost:5432/damoyeo_ai"
 
-    # TODO: 임시 플래그. Place Verifier(영업 검증)가 Gemini google_search 할당량 문제로 테스트를 막고 있어서
-    # 우회용으로 추가함 (2026-08-20). 원인(할당량) 해결되면 이 플래그와 관련 분기를 지운다.
+    # 영업시간 검증(Place Verifier)을 건너뛰고 항상 UNKNOWN으로 두는 플래그. 빠른 로컬 테스트용.
     skip_business_hours_verification: bool = False
 
     # LangSmith

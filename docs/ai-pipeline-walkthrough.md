@@ -251,15 +251,16 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
 | --- | --- |
 | 파일 | `app/graph/nodes/n_candidate_place_verifier.py` |
 | 입력 | `place_candidates`, `confirmed_slot`(날짜/시작/종료 시각) |
-| 방식 | LLM 2단계 호출 (검색 도구 바인딩 → 구조화 판정), 장소별 **병렬** 실행, 전체 20초 타임아웃 |
+| 방식 | 검색(Serper API) → 판정(LLM 구조화 출력), 장소별 **병렬** 실행, 전체 20초 타임아웃 |
 | 출력 | `verified_places`, `verification_timed_out` |
 
-장소마다 두 번 LLM을 호출합니다.
+장소마다 검색 한 번(비-LLM) + LLM 판정 한 번을 합니다.
 
-1. **검색**: `get_llm().bind_tools([{"google_search": {}}])` — 같은 모델(`gemini-3.5-flash-lite`)에 Google 검색 도구를 붙여서, `"{place_name}({address})의 {date} 기준 영업시간과 정기 휴무일을 웹 검색으로 확인해줘"` 라고 물음. 출처 URL도 같이 요청.
-2. **판정**: 검색 결과 텍스트만 근거로 구조화 출력 `{status, businessHours, source}` 생성. `status`는 `PASS`(그 시간대가 영업시간 안)/`FAIL`(휴무 또는 시간대 벗어남)/`UNKNOWN`(정보 부족) 3-state. **`UNKNOWN`을 임의로 `PASS`/`FAIL`로 단정하지 않습니다.**
+1. **검색**: `app/services/serper_client.py`로 [Serper](https://serper.dev) 검색 API를 호출합니다. 검색어는 `"{place_name} {address} 영업시간 휴무일"`(`app/prompts/n_candidate_place_verifier.py`의 `SEARCH_QUERY_TEMPLATE`, LLM 프롬프트가 아니라 순수 문자열). 상위 5개 결과(제목·스니펫·출처 URL)를 받아 텍스트로 정리합니다.
+   > 원래는 Gemini의 `google_search` grounding 도구로 이 단계까지 LLM이 직접 검색했지만, grounding이 일반 텍스트 생성과 별도의 훨씬 빡빡한 할당량을 갖고 있어 자주 `429`가 나서 검색만 Serper로 분리했습니다(2026-08-21). 판정 단계는 원래부터 grounding과 무관한 일반 Gemini 호출이라 그대로입니다.
+2. **판정**: 검색 결과 텍스트만 근거로 구조화 출력 `{status, businessHours, source}` 생성(`CLASSIFY_SYSTEM_PROMPT`, 기존과 동일). `status`는 `PASS`(그 시간대가 영업시간 안)/`FAIL`(휴무 또는 시간대 벗어남)/`UNKNOWN`(정보 부족) 3-state. **`UNKNOWN`을 임의로 `PASS`/`FAIL`로 단정하지 않습니다.**
 
-20초 안에 못 끝난 작업은 취소되고 결과에서 빠지며(`verification_timed_out=true`), 검색/판정 중 예외가 나면 해당 장소는 `UNKNOWN`으로 남습니다. `app/core/config.py`의 `SKIP_BUSINESS_HOURS_VERIFICATION` 플래그가 켜져 있으면 이 두 LLM 호출을 아예 생략하고 즉시 `UNKNOWN`을 반환합니다(현재 Google `google_search` 할당량 문제로 로컬 테스트 시 켜둠).
+20초 안에 못 끝난 작업은 취소되고 결과에서 빠지며(`verification_timed_out=true`), 검색/판정 중 예외가 나면 해당 장소는 `UNKNOWN`으로 남습니다. `app/core/config.py`의 `SKIP_BUSINESS_HOURS_VERIFICATION` 플래그가 켜져 있으면 검색·판정을 아예 생략하고 즉시 `UNKNOWN`을 반환합니다(빠른 로컬 테스트용).
 
 ### 4.4 Candidate Ranker
 
@@ -307,7 +308,7 @@ LLM이 존재하지 않는 `kakaoPlaceId`를 답하면 그 항목은 조용히 �
         │
         ▼ (장소별 병렬, 최대 20초)
 ┌─────────────────────────────────────────────────────────┐
-│ Candidate Place Verifier (LLM: 검색 도구 + 구조화 판정)     │
+│ Candidate Place Verifier (Serper 검색 + LLM 구조화 판정)   │
 │  → verified_places[] (PASS/FAIL/UNKNOWN)                 │
 └─────────────────────────────────────────────────────────┘
         │ (FAIL 제외)

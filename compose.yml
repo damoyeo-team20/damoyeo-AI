@@ -7,6 +7,9 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:?GOOGLE_API_KEY를 .env에 설정하세요}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:?KAKAO_REST_API_KEY를 .env에 설정하세요}
+      # 영업시간 검증(Place Verifier) 검색용. 없어도 컨테이너는 뜨지만, 검증 단계에서 매번
+      # SERPER_API_KEY_MISSING으로 실패한다 (SKIP_BUSINESS_HOURS_VERIFICATION=true면 무관).
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
       # Back은 이제 이 compose 밖(백엔드 팀이 별도로 배포, 실제 RDS 연결)에서 돈다.
       # 로컬 개발 중이면 http://localhost:8080, 배포 환경이면 실제 Back 주소를 .env에 넣는다.
       BACKEND_API_BASE_URL: ${BACKEND_API_BASE_URL:?BACKEND_API_BASE_URL을 .env에 설정하세요}
@@ -14,7 +17,7 @@ services:
       LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-damoyeo-ai}
-      # TODO: 임시. N6 영업 검증(Gemini google_search)이 할당량 문제로 테스트를 막아서 우회용.
+      # 영업시간 검증을 건너뛰고 항상 UNKNOWN으로 두는 플래그. 빠른 로컬 테스트용.
       SKIP_BUSINESS_HOURS_VERIFICATION: ${SKIP_BUSINESS_HOURS_VERIFICATION:-false}
     # Back이 더 이상 이 compose가 관리하는 서비스가 아니라, 같은 호스트에 떠 있는 컨테이너를
     # host.docker.internal로 부른다. 백엔드 팀이 별도 서버로 옮기면 BACKEND_API_BASE_URL만

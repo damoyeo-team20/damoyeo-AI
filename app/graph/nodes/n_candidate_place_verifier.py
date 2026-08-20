@@ -6,6 +6,10 @@ PASS/FAIL로 단정하지 않는다. 전체 타임아웃을 두고, 타임아웃
 
 날짜만이 아니라 `/schedule`이 확정한 실제 시각(confirmed_start_at~confirmed_end_at)에 영업하는지까지
 판정한다.
+
+검색과 판정을 분리한다 — 검색은 Serper(https://serper.dev)로, 판정(구조화 출력)은 Gemini로.
+Gemini의 `google_search` grounding 도구를 그대로 썼을 때 별도의 빡빡한 할당량(일반 텍스트 생성과
+무관하게) 때문에 자주 막혀서, 검색만 별도 서비스로 뗐다.
 """
 
 import asyncio
@@ -17,13 +21,22 @@ from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.core.debug import record_debug  # TEMP DEBUG
-from app.core.llm import extract_text_content, get_llm
+from app.core.llm import get_llm
 from app.graph.state import CandidatesState, PlaceCandidate, VerifiedPlace
-from app.prompts.n_candidate_place_verifier import CLASSIFY_SYSTEM_PROMPT, SEARCH_PROMPT
+from app.prompts.n_candidate_place_verifier import CLASSIFY_SYSTEM_PROMPT, SEARCH_QUERY_TEMPLATE
+from app.services.serper_client import SerperResult, search as serper_search
 
 logger = logging.getLogger(__name__)
 
 _OVERALL_TIMEOUT_SECONDS = 20.0
+
+
+def _format_search_results(results: list[SerperResult]) -> str:
+    if not results:
+        return "(검색 결과 없음)"
+    return "\n".join(
+        f"- {r.title}\n  {r.snippet}\n  출처: {r.link}" for r in results
+    )
 
 
 class _Classification(BaseModel):
@@ -37,8 +50,8 @@ async def _verify_one(
     place: PlaceCandidate, date: str, start_time: str, end_time: str
 ) -> VerifiedPlace:
     classification = _Classification(status="UNKNOWN")
-    # 임시 우회: Gemini google_search 할당량 문제로 테스트가 막혀서, 검증 자체를 건너뛰고
-    # 항상 UNKNOWN으로 둔다 (거짓 PASS/FAIL을 만들지 않음 — 기존 3-state를 그대로 활용).
+    # 검증 자체를 건너뛰고 항상 UNKNOWN으로 둔다 (거짓 PASS/FAIL을 만들지 않음 — 기존 3-state를
+    # 그대로 활용). 빠른 로컬 테스트용 플래그.
     if get_settings().skip_business_hours_verification:
         record_debug(  # TEMP DEBUG
             "n_candidate_place_verifier", {"place": place["name"], "skipped": True}
@@ -58,17 +71,9 @@ async def _verify_one(
             "checked_at": datetime.now(UTC),
         }
     try:
-        search_llm = get_llm().bind_tools([{"google_search": {}}])
-        search_response = await search_llm.ainvoke(
-            SEARCH_PROMPT.format(
-                place_name=place["name"],
-                address=place["address"],
-                date=date,
-                start_time=start_time,
-                end_time=end_time,
-            )
-        )
-        search_text = extract_text_content(search_response.content)
+        query = SEARCH_QUERY_TEMPLATE.format(place_name=place["name"], address=place["address"])
+        results = await serper_search(query)
+        search_text = _format_search_results(results)
 
         classify_llm = get_llm().with_structured_output(_Classification)
         classification = await classify_llm.ainvoke(

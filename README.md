@@ -257,7 +257,7 @@ Agent는 Vocabulary에 없는 새로운 code를 절대 임의로 생성하지 �
 | 프롬프트/체인 관리 | LangChain |
 | API 서버 | FastAPI + uvicorn |
 | 패키지 관리 | uv |
-| 외부 데이터 연동 | Kakao Local API |
+| 외부 데이터 연동 | Kakao Local API, Serper(웹 검색) |
 | 로깅/트레이싱 | LangSmith |
 | 배포 | Docker (멀티 아키텍처 이미지) + GitHub Actions CI/CD + EC2 |
 
@@ -277,7 +277,6 @@ Agent는 Vocabulary에 없는 새로운 code를 절대 임의로 생성하지 �
 
 ## 오픈 이슈
 
-- **영업시간 검증(Candidate Place Verifier) 할당량**: Gemini `google_search` grounding 도구가 일반 LLM 호출과 별도의 더 빡빡한 할당량을 가지고 있어, 테스트 중 429가 자주 발생한다. 임시로 `SKIP_BUSINESS_HOURS_VERIFICATION` 플래그로 우회 가능 (`app/core/config.py`).
 - **캘린더 등록 · 자동 예약**: 아직 미착수. 네이버는 예약 API가 없어 브라우저 자동화가 필요한데 로그인·인증 리스크가 큼. 실제 예약까지 시도할지, 캘린더 등록까지를 완료 지점으로 볼지 미결정.
 - **`meetings` 테이블의 확정 시각 컬럼**: `docs/db_schema.md`에는 `confirmed_start_at`/`confirmed_end_at`만 있으나, 라이브 DB에서 `resolved_*` 컬럼도 별도로 관측된 적이 있어 실제 저장 흐름(2단계 pending→confirmed 구조 여부)을 Back 팀과 재확인이 필요하다.
 - **참여자별 가능 날짜 수집 방식**: `docs/db_schema.md` 기준으로 참여자별 캘린더 가능 시간을 담는 테이블이 아직 확정되지 않았다 (`calendarAvailability` 필드 미확정). Back이 `/schedule`·`/context/messages`에 넘기는 `commonAvailableDates`/`candidateDates`를 실제로 어떻게 계산하는지는 Back 구현에 달려 있다.
