@@ -21,7 +21,7 @@ class MappingType(str, Enum):
 class Strength(str, Enum):
     """LLM에게 연속값을 시키지 않고 3단계로만 응답받는다. 수치 변환이 필요하면 저장 주체(Back)가 한다.
 
-    값 이름은 `docs/api-design2-backend.md`가 정의한 `user_preferences.strength` 계약을 그대로 따른다.
+    값 이름은 `docs/api-design-backend.md`가 정의한 `user_preferences.strength` 계약을 그대로 따른다.
     """
 
     WEAK = "WEAK"

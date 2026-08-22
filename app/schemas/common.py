@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
-# 에러 포맷 — docs/api-design2-backend.md 1장 "공통 오류 형식" 기준
+# 에러 포맷 — docs/api-design-backend.md 1장 "공통 오류 형식" 기준
 
 
 class ErrorDetail(BaseModel):

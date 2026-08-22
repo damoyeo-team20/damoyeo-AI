@@ -4,7 +4,7 @@ import json
 from app.main import app
 
 
-_OPENAPI_SHA256 = "fc42d50c1601d8fad0f9f05ad2219cb8183655ea0c21f68ea0d2b1e4cf1829dc"
+_OPENAPI_SHA256 = "02f467ae714c2d0baea71182eb791de6292a506bc40d1c0548e052180d773db2"
 
 
 def test_openapi_contract_is_unchanged():

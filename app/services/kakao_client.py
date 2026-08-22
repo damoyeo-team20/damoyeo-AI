@@ -40,7 +40,7 @@ async def search_places(keyword: str, region: str, size: int = 5) -> list[KakaoP
             response = await client.get(_SEARCH_URL, headers=headers, params=params)
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            # docs/api-design2-backend.md 6장의 PLACE_PROVIDER_ERROR(502)에 대응.
+            # docs/api-design-backend.md 6장의 PLACE_PROVIDER_ERROR(502)에 대응.
             # 우리는 Kakao 하나만 쓰지만 문서는 장소 제공자 실패를 이 code로 통칭한다.
             raise AIServiceError(
                 code="PLACE_PROVIDER_ERROR",

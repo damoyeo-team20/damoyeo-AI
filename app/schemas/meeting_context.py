@@ -4,7 +4,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Context 모임 목적 채팅 (2단계: /context/messages 한 턴, /context 최종 요약)
-# 계약은 docs/api-design2-backend.md 5장 기준. 지역/날짜/시간대는 다른 화면(UI)에서 이미 확정되므로
+# 계약은 docs/api-design-backend.md 5장 기준. 지역/날짜/시간대는 다른 화면(UI)에서 이미 확정되므로
 # 이 노드는 관여하지 않는다 — UiInputs/UiConflict 같은 개념은 새 계약에 없다.
 #
 # 대화 결과는 구조화된 객체가 아니라 한 문장 purpose로 내려간다. /candidates도 이 문장을

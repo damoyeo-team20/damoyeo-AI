@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.preference import Sentiment, Strength
 
 # `POST /ai/meetings/{meetingId}/candidates` 계약.
-# 필드는 docs/api-design2-backend.md 6장 기준이며, 파이프라인은
+# 필드는 docs/api-design-backend.md 6장 기준이며, 파이프라인은
 # Activity Decider -> Place Search -> Place Verifier -> Ranker이다.
 #
 # 날짜/시각 확정은 이 API의 일이 아니다 — `POST /ai/meetings/{meetingId}/schedule`(Schedule

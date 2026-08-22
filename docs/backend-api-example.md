@@ -1,6 +1,6 @@
 # Backend API Example (참고용)
 
-> 백엔드에서 제안한 AI API 형식 예시입니다. **최종 기준은 [api-design2-backend.md](api-design2-backend.md)**이며,
+> 백엔드에서 제안한 AI API 형식 예시입니다. **최종 기준은 [api-design-backend.md](api-design-backend.md)**이며,
 > 이 문서는 백엔드가 어떤 형태를 기대하는지 비교·참고하는 용도로만 둡니다.
 
 ## 9. AI 연동 예정 API 계약

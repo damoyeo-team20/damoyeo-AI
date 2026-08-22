@@ -98,7 +98,7 @@ flowchart LR
 
 Kakao Local 검색 결과만으로는 확정된 모임 시간에 실제로 영업하는지 알 수 없습니다. 처음엔 Gemini의 `google_search` grounding 도구로 검증했지만, 이 도구가 일반 텍스트 생성과는 별도의 훨씬 빡빡한 할당량을 가져 자주 429로 막혔습니다(재시도에만 35초가 걸려 20초 타임아웃 안에 에러 로그도 없이 실패). 검색(Serper API)과 판정(Gemini 구조화 출력)을 분리해 이 문제를 해결했고, 검증 결과는 `PASS/FAIL/UNKNOWN` 3-state로 유지해 "확인 안 됨"과 "확인 후 영업 안 함"을 구분합니다. 비용이 드는 외부 검증은 공정성 기준 상위 후보부터 선별적으로만 실행합니다.
 
-더 자세한 설계 배경과 대안 비교는 [`docs/presentation-notes.md`](docs/presentation-notes.md)에 정리했습니다.
+더 자세한 설계 배경과 대안 비교는 [`docs/design-decisions.md`](docs/design-decisions.md)에 정리했습니다.
 
 ## 기술 스택
 
@@ -121,8 +121,8 @@ damoyeo-AI/
 ├── Dockerfile / compose.yml           # 프로덕션 이미지 빌드 · 배포
 ├── .github/workflows/                 # CI(pytest) · Docker 빌드/푸시/배포
 ├── docs/
-│   ├── api-design2-backend.md         # Back↔AI 계약 단일 기준 문서
-│   └── presentation-notes.md          # 핵심 설계 의사결정 정리
+│   ├── api-design-backend.md         # Back↔AI 계약 단일 기준 문서
+│   └── design-decisions.md          # 핵심 설계 의사결정 정리
 ├── app/
 │   ├── main.py                        # FastAPI 엔트리포인트, 공통 에러 핸들러
 │   ├── api/routes/                    # HTTP 라우터 (preferences, meetings, internal)
@@ -163,7 +163,7 @@ uv run uvicorn app.main:app --reload
 
 ## API 사용법
 
-전체 요청/응답 필드와 에러 코드는 [`docs/api-design2-backend.md`](docs/api-design2-backend.md)가 단일 기준입니다(중복 방지를 위해 이 문서엔 예시 하나만 둡니다).
+전체 요청/응답 필드와 에러 코드는 [`docs/api-design-backend.md`](docs/api-design-backend.md)가 단일 기준입니다(중복 방지를 위해 이 문서엔 예시 하나만 둡니다).
 
 ```bash
 curl -X POST http://localhost:8000/ai/preferences/extract \
@@ -191,10 +191,5 @@ LLM에게 후보 날짜를 `2026-08-28 (Friday)`처럼 요일과 함께 보여�
 
 ## 문서
 
-- [`docs/api-design2-backend.md`](docs/api-design2-backend.md) — Back↔AI 요청/응답 계약 (단일 기준)
-- [`docs/presentation-notes.md`](docs/presentation-notes.md) — 핵심 설계 의사결정과 대안 비교
-
-## 만든 사람
-
-**유호찬 (hayes.yu)** — AI 파이프라인 설계·구현
-[GitHub](#) · [블로그](#)
+- [`docs/api-design-backend.md`](docs/api-design-backend.md) — Back↔AI 요청/응답 계약 (단일 기준)
+- [`docs/design-decisions.md`](docs/design-decisions.md) — 핵심 설계 의사결정과 대안 비교

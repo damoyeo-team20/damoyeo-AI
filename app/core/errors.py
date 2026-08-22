@@ -1,7 +1,7 @@
 class AIServiceError(Exception):
     """공통 에러 응답 포맷(`{"error": {"code","message","retryable","requestId"}}`)으로 직렬화되는 예외.
 
-    포맷은 docs/api-design2-backend.md 1장 "공통 오류 형식"을 따른다.
+    포맷은 docs/api-design-backend.md 1장 "공통 오류 형식"을 따른다.
     """
 
     def __init__(
