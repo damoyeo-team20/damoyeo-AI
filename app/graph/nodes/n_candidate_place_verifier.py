@@ -22,7 +22,6 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.core.config import get_settings
-from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.candidates_state import CandidatesState, PlaceCandidate, VerifiedPlace
 from app.prompts.n_candidate_place_verifier import CLASSIFY_SYSTEM_PROMPT, SEARCH_QUERY_TEMPLATE
@@ -113,9 +112,6 @@ async def _verify_one(
     # 검증 자체를 건너뛰고 항상 UNKNOWN으로 둔다 (거짓 PASS/FAIL을 만들지 않음 — 기존 3-state를
     # 그대로 활용). 빠른 로컬 테스트용 플래그.
     if get_settings().skip_business_hours_verification:
-        record_debug(  # TEMP DEBUG
-            "n_candidate_place_verifier", {"place": place["name"], "skipped": True}
-        )
         return _to_verified_place(place, classification)
     try:
         query = SEARCH_QUERY_TEMPLATE.format(
@@ -135,20 +131,8 @@ async def _verify_one(
             )
         )
         classification = _normalize_classification(classification, results)
-    except Exception as exc:
+    except Exception:
         logger.exception("영업 검증 실패: %s", place["name"])
-        record_debug(  # TEMP DEBUG
-            "n_candidate_place_verifier", {"place": place["name"], "error": repr(exc)}
-        )
-    else:
-        record_debug(  # TEMP DEBUG
-            "n_candidate_place_verifier",
-            {
-                "place": place["name"],
-                "search_text": search_text,
-                "classification": classification.model_dump(),
-            },
-        )
 
     return _to_verified_place(place, classification)
 

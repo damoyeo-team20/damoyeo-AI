@@ -8,7 +8,6 @@ from typing import Literal
 
 from pydantic import BaseModel, create_model
 
-from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.context_state import ContextChatState
 from app.prompts.n_context_router import CONTEXT_ROUTE_PROMPT
@@ -47,6 +46,5 @@ async def route_context_message(state: ContextChatState) -> dict:
             {"role": "user", "content": user},
         ]
     )
-    record_debug("n_context_router", result)  # TEMP DEBUG
 
     return {"route": result.route}

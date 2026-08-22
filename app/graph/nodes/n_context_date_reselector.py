@@ -11,7 +11,6 @@ from typing import Literal
 
 from pydantic import BaseModel, create_model
 
-from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.context_state import ContextChatState
 from app.prompts.n_context_date_reselector import DATE_RESELECT_SYSTEM_PROMPT
@@ -49,7 +48,6 @@ async def reselect_date(state: ContextChatState) -> dict:
             {"role": "user", "content": user},
         ]
     )
-    record_debug("n_context_date_reselector", result)  # TEMP DEBUG
 
     if result.chosen_date is None:
         return {"reply": result.reply, "candidate_dates": candidate_dates}

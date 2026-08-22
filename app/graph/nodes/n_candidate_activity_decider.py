@@ -20,7 +20,6 @@ from pydantic import (
     model_validator,
 )
 
-from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.errors import AIServiceError
 from app.core.llm import get_llm
 from app.graph.candidates_state import CandidatesState, SearchPlan
@@ -169,7 +168,6 @@ async def decide_activities(state: CandidatesState) -> dict:
         if isinstance(parsing_error, BaseException):
             raise error from parsing_error
         raise error
-    record_debug("n_candidate_activity_decider", result)  # TEMP DEBUG
 
     if result.status == "CONFLICT":
         return {

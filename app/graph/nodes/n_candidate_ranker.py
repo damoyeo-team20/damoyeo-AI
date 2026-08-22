@@ -13,7 +13,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.errors import AIServiceError
 from app.core.llm import get_llm
 from app.graph.fairness import (
@@ -238,12 +237,9 @@ async def rank_and_explain(state: CandidatesState) -> dict:
             _CandidateEvaluation,
         ]
     ] = []
-    context_rejected = 0
-    allergy_vetoed = 0
     for original_index, place in enumerate(places):
         evaluation, relations = validated[place["kakao_place_id"]]
         if evaluation.context_relation is ContextRelation.NONE:
-            context_rejected += 1
             continue
         fairness = calculate_candidate_fairness(
             participants,
@@ -251,7 +247,6 @@ async def rank_and_explain(state: CandidatesState) -> dict:
             candidate_id=place["kakao_place_id"],
         )
         if fairness.vetoed:
-            allergy_vetoed += 1
             continue
         scored.append(
             (fairness, evaluation.context_relation, original_index, place, evaluation)
@@ -274,23 +269,4 @@ async def rank_and_explain(state: CandidatesState) -> dict:
         for fairness, context_relation, original_index, place, evaluation in scored
     ]
 
-    record_debug(  # TEMP DEBUG
-        "n_candidate_ranker",
-        {
-            "evaluation": result.model_dump(),
-            "contextRejectedCount": context_rejected,
-            "allergyVetoedCount": allergy_vetoed,
-            "rankedScores": [
-                {
-                    "kakaoPlaceId": candidate["place"]["kakao_place_id"],
-                    "contextRelation": candidate["context_relation"],
-                    "participantSatisfaction": candidate["participant_satisfaction"],
-                    "S": candidate["group_satisfaction"],
-                    "F": candidate["minimum_satisfaction"],
-                    "score": candidate["fairness_score"],
-                }
-                for candidate in ranked_candidates
-            ],
-        },
-    )
     return {"ranked_candidates": ranked_candidates}

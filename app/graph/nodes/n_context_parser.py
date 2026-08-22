@@ -11,7 +11,6 @@ AI는 상태를 저장하지 않는다 — 두 함수 모두 매 호출마다 `h
 
 from pydantic import BaseModel
 
-from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import extract_text_content, get_llm
 from app.graph.context_state import ContextChatState
 from app.prompts.n_context_parser import CHAT_SYSTEM_PROMPT, FINALIZE_SYSTEM_PROMPT
@@ -35,7 +34,6 @@ async def generate_context_reply(history: list[ChatTurn], message: str) -> Conte
 
     response = await llm.ainvoke(messages)
     reply = extract_text_content(response.content)
-    record_debug("n2_generate_context_reply", {"reply": reply})  # TEMP DEBUG
     return ContextMessageResponse(reply=reply)
 
 
@@ -61,5 +59,4 @@ async def finalize_meeting_context(history: list[ChatTurn]) -> ContextFinalizeRe
             {"role": "user", "content": f"## 대화 전체\n{transcript}"},
         ]
     )
-    record_debug("n2_finalize_meeting_context", result)  # TEMP DEBUG
     return ContextFinalizeResponse(reply=result.reply, purpose=result.purpose)

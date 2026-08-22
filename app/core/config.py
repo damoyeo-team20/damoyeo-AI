@@ -26,9 +26,6 @@ class Settings(BaseSettings):
     # AI -> Back 호출에 실어 보내는 공유 비밀값. Back과 반드시 같은 값이어야 한다.
     internal_api_key: str = ""
 
-    # DB (AI 서비스가 직접 소유하는 preference_vocabulary 등)
-    database_url: str = "postgresql+asyncpg://localhost:5432/damoyeo_ai"
-
     # 영업시간 검증(Place Verifier)을 건너뛰고 항상 UNKNOWN으로 두는 플래그. 빠른 로컬 테스트용.
     skip_business_hours_verification: bool = False
 

@@ -2,10 +2,8 @@
 
 AI 서버 기동 시 1회 호출해 인메모리에 캐싱한다 (ai-part-proposal.md 6장 기준).
 
-DB를 AI 서비스가 직접 소유하는 안(SQLAlchemy 직접 조회)이 로컬에서 테스트되고 있지만
-아직 팀 확정 사항이 아니다 — 소유권 이전이 아니라 테스트 단계이므로 이 클라이언트는
-계속 Back의 HTTP 엔드포인트를 호출한다. `app/core/database.py`, `app/models/vocabulary.py`
-등 DB 인프라는 결정이 나올 때까지 리포지토리에 남겨두되 여기서는 쓰지 않는다.
+AI는 DB를 직접 소유하지 않는다 — Vocabulary는 항상 이 클라이언트를 통해 Back의 HTTP
+엔드포인트에서 가져온다.
 """
 
 import httpx

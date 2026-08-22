@@ -5,7 +5,6 @@
 
 from pydantic import BaseModel, Field
 
-from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
 from app.graph.preference_state import PreferenceState
 from app.prompts.n_preference_extractor import SYSTEM_PROMPT, USER_TEMPLATE
@@ -56,7 +55,6 @@ async def extract_preferences(text: str) -> list[ExtractedPreference]:
             {"role": "user", "content": user},
         ]
     )
-    record_debug("n_preference_extractor", result.preferences)  # TEMP DEBUG
 
     preferences = []
     for item in result.preferences:
