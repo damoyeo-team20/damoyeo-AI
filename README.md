@@ -122,7 +122,6 @@ damoyeo-AI/
 ├── .github/workflows/                 # CI(pytest) · Docker 빌드/푸시/배포
 ├── docs/
 │   ├── api-design2-backend.md         # Back↔AI 계약 단일 기준 문서
-│   ├── ai-pipeline-walkthrough.md     # 노드별 내부 동작 상세
 │   └── presentation-notes.md          # 핵심 설계 의사결정 정리
 ├── app/
 │   ├── main.py                        # FastAPI 엔트리포인트, 공통 에러 핸들러
@@ -193,7 +192,6 @@ LLM에게 후보 날짜를 `2026-08-28 (Friday)`처럼 요일과 함께 보여�
 ## 문서
 
 - [`docs/api-design2-backend.md`](docs/api-design2-backend.md) — Back↔AI 요청/응답 계약 (단일 기준)
-- [`docs/ai-pipeline-walkthrough.md`](docs/ai-pipeline-walkthrough.md) — 노드별 내부 동작 상세
 - [`docs/presentation-notes.md`](docs/presentation-notes.md) — 핵심 설계 의사결정과 대안 비교
 
 ## 만든 사람

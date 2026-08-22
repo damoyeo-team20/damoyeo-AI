@@ -1,6 +1,6 @@
 # 발표용 AI 설계 정리
 
-이 문서는 API 명세서가 아니라, 발표에서 **어떤 문제를 발견했고 어떤 기준으로 AI 파이프라인을 설계했는지** 설명하기 위한 자료다. 실제 Back↔AI 요청·응답 계약은 [`api-design2-backend.md`](api-design2-backend.md), 노드별 실행 흐름은 [`ai-pipeline-walkthrough.md`](ai-pipeline-walkthrough.md)를 기준으로 한다.
+이 문서는 API 명세서가 아니라, 발표에서 **어떤 문제를 발견했고 어떤 기준으로 AI 파이프라인을 설계했는지** 설명하기 위한 자료다. 실제 Back↔AI 요청·응답 계약은 [`api-design2-backend.md`](api-design2-backend.md)를 기준으로 한다.
 
 발표의 세 가지 핵심 주제는 다음과 같다.
 
@@ -487,7 +487,6 @@ Extractor는 두 값을 서로 다른 계층 코드로 보존하고, 후보 단�
 - 매핑 지침: `app/prompts/n_preference_extractor.py`
 - 출력 DTO와 고정 Enum(`sentiment`, `strength`, `mappingType`): `app/schemas/preference.py`
 - 그래프 분기: `app/graph/build_preference_graph.py`
-- 저장 구조: `docs/db_schema.md`
 - Back↔AI 최종 계약: `docs/api-design2-backend.md`
 - 현재 테스트: `tests/graph/test_preference_extractor.py`, `tests/graph/test_preference_graph.py`, `tests/graph/test_preference_router.py`, `tests/api/test_preferences_route.py`
 
@@ -1009,7 +1008,6 @@ C: 매운 음식 강한 비선호
 - 수식·veto 단위 테스트: `tests/graph/test_fairness.py`
 - 랭킹·완전성 검증 테스트: `tests/graph/test_ranker_explainer.py`
 - 참여자 경계 보존 API 테스트: `tests/api/test_candidates_route.py`
-- 실제 파이프라인 설명: `docs/ai-pipeline-walkthrough.md`
 - Back↔AI 요청·응답 계약: `docs/api-design2-backend.md`
 
 ---
@@ -1414,9 +1412,30 @@ initial 6개에서 usable 후보를 충분히 확보하면 호출을 크게 줄�
 - `FAIL` 제외와 기존 DTO 조립: `app/graph/nodes/l_candidate_suggestion_builder.py`
 - 후보 응답 DTO: `app/schemas/candidates.py`
 - 그래프 연결: `app/graph/build_candidates_graph.py`
-- 노드 실행 흐름: `docs/ai-pipeline-walkthrough.md`
 - Back↔AI 최종 계약: `docs/api-design2-backend.md`
 - 검증 fallback 테스트: `tests/graph/test_candidate_place_verifier.py`
 - Pre-Ranker 테스트: `tests/graph/test_ranker_explainer.py`
 - Suggestion Builder 테스트: `tests/graph/test_candidate_suggestion_builder.py`
 - Serper 클라이언트 테스트: `tests/services/test_serper_client.py`
+
+---
+
+## 4. 발표에서 실제로 받은 질문
+
+위 1~3장은 발표 전에 준비한 예상 질문이고, 이 장은 실제 발표 후에 받은 질문을 기록한다. 성격이 다른 질문이 섞여 있다 — AI 설계에 관한 것도 있고, 제품 전략 자체에 대한 것도 있다.
+
+### 4.1 카카오맵 API의 오래되거나 잘못된 정보를 LLM에 보내기 전에 걸러내는가
+
+**아니다.** `app/services/kakao_client.py`는 Kakao 응답의 `id`/`place_name`/`address`/`category_name`/`place_url`/좌표를 그대로 파싱해서 넘긴다. 폐업 여부나 정보 최신성을 판별하는 전처리가 없다. 파이프라인에서 유일한 사실 검증은 Place Verifier의 **영업시간 전용** 웹 검색·판정뿐이라, "장소가 아예 폐업했다"거나 "주소·카테고리가 잘못됐다" 같은 문제는 걸러지지 않은 채 Ranker(LLM)까지 그대로 전달된다. 실제 한계로 인정해야 한다.
+
+### 4.2 네이버지도가 정보가 더 많은데 왜 카카오맵 API를 선택했는가
+
+실제 팀 결정 근거가 이 저장소의 기록에는 남아있지 않다. 일반적으로 알려진 이유(카카오 Local API가 개인/소규모 프로젝트 기준으로 발급과 무료 할당량 접근이 쉽고 REST API 문서화가 잘 되어 있음)는 있지만, 이것이 실제 선택 이유였는지는 별도 확인이 필요하다. 지어내서 답하지 않는다.
+
+### 4.3 개인 선호도 입력에 AI를 쓰는 게 오버엔지니어링 아닌가
+
+1장에서 다룬 트레이드오프 자체가 이 질문에 대한 답이다. 드롭다운·체크박스 같은 고정 UI로도 선호를 받을 수 있지만, 그러면 사전에 없는 표현("사슴고기 좋아해")이나 복합·반대 선호("해산물은 별론데 조개는 좋아")를 표현할 수 없다. 자연어 입력은 표현력을 얻는 대신 매핑 정확도·프롬프트 비용이라는 대가를 지불하는 선택이며, 1.8장의 한계 목록이 이 대가를 정리한다.
+
+### 4.4 앱 설치·초대·모임 생성 자체도 시간이 걸리는 일 아닌가 / 굳이 이 서비스를 써야 하나 / 초대 과정이 복잡해 진입장벽이 높다
+
+세 질문 모두 같은 축이다(초기 설정 비용). 타깃을 "1회성 모임이 아니라 여러 해 이어지는 **정기 모임**"으로 좁힌 이유가 여기에 대한 답이다 — 초기 설정 비용(설치·초대·선호 입력)은 그 그룹의 첫 모임에서 한 번만 지불하고, 같은 그룹이 반복해서 모일 때마다 그 비용이 상각(amortize)된다는 논리다. 다만 이건 검증된 사실이 아니라 제품이 세운 가설이며, 실제로 상각될 만큼 재사용 빈도가 나오는지는 별도로 검증해야 한다. 초대·가입 과정의 복잡함은 다자간 조율 서비스(Doodle, Partiful 등)가 공통으로 갖는 콜드스타트 문제이지 다모여만의 결함은 아니지만, 그렇다고 문제가 없다는 뜻은 아니다.
