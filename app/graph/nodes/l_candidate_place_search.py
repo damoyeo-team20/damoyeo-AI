@@ -7,7 +7,7 @@ Activity Decider의 검색 계획을 병렬 실행해 넓은 후보 풀을 만�
 
 import asyncio
 
-from app.graph.state import CandidatesState, PlaceCandidate, SearchPlan
+from app.graph.candidates_state import CandidatesState, PlaceCandidate, SearchPlan
 from app.services.kakao_client import KakaoPlace, search_places as kakao_search
 
 _KAKAO_RESULTS_PER_QUERY = 5

@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 
-from app.graph import build_graph
+from app.graph import build_candidates_graph
 from app.graph.nodes import (
     l_candidate_place_search,
     l_candidate_suggestion_builder,
@@ -50,13 +50,13 @@ def test_candidate_graph_runs_prerank_before_verification(monkeypatch):
         calls.append("build")
         return {"suggestions": []}
 
-    monkeypatch.setattr(build_graph, "decide_activities", decide)
-    monkeypatch.setattr(build_graph, "search_places", search)
-    monkeypatch.setattr(build_graph, "rank_and_explain", rank)
-    monkeypatch.setattr(build_graph, "verify_places", verify)
-    monkeypatch.setattr(build_graph, "build_suggestions", build)
+    monkeypatch.setattr(build_candidates_graph, "decide_activities", decide)
+    monkeypatch.setattr(build_candidates_graph, "search_places", search)
+    monkeypatch.setattr(build_candidates_graph, "rank_and_explain", rank)
+    monkeypatch.setattr(build_candidates_graph, "verify_places", verify)
+    monkeypatch.setattr(build_candidates_graph, "build_suggestions", build)
 
-    graph = build_graph.build_candidates_graph()
+    graph = build_candidates_graph.build_candidates_graph()
     result = asyncio.run(graph.ainvoke({}))
 
     assert calls == ["decide", "search", "rank", "verify", "build"]
@@ -78,13 +78,13 @@ def test_candidate_graph_stops_after_activity_conflict(monkeypatch):
         calls.append("unexpected")
         return {}
 
-    monkeypatch.setattr(build_graph, "decide_activities", decide)
-    monkeypatch.setattr(build_graph, "search_places", must_not_run)
-    monkeypatch.setattr(build_graph, "rank_and_explain", must_not_run)
-    monkeypatch.setattr(build_graph, "verify_places", must_not_run)
-    monkeypatch.setattr(build_graph, "build_suggestions", must_not_run)
+    monkeypatch.setattr(build_candidates_graph, "decide_activities", decide)
+    monkeypatch.setattr(build_candidates_graph, "search_places", must_not_run)
+    monkeypatch.setattr(build_candidates_graph, "rank_and_explain", must_not_run)
+    monkeypatch.setattr(build_candidates_graph, "verify_places", must_not_run)
+    monkeypatch.setattr(build_candidates_graph, "build_suggestions", must_not_run)
 
-    graph = build_graph.build_candidates_graph()
+    graph = build_candidates_graph.build_candidates_graph()
     result = asyncio.run(graph.ainvoke({}))
 
     assert calls == ["decide"]
@@ -200,7 +200,7 @@ def test_full_candidate_graph_connects_search_rank_verify_and_build(monkeypatch)
         fake_fetch_vocabulary,
     )
 
-    graph = build_graph.build_candidates_graph()
+    graph = build_candidates_graph.build_candidates_graph()
     result = asyncio.run(
         graph.ainvoke(
             {

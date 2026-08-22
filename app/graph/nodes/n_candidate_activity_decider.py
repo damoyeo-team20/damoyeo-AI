@@ -23,7 +23,7 @@ from pydantic import (
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.errors import AIServiceError
 from app.core.llm import get_llm
-from app.graph.state import CandidatesState, SearchPlan
+from app.graph.candidates_state import CandidatesState, SearchPlan
 from app.prompts.n_candidate_activity_decider import SYSTEM_PROMPT
 from app.schemas.candidates import ActionRequired, ActionRequiredType, MeetingTag, to_meeting_tag
 

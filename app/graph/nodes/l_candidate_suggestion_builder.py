@@ -7,7 +7,7 @@
 import logging
 
 from app.core.errors import AIServiceError
-from app.graph.state import CandidatesState, RankedCandidate, VerifiedPlace
+from app.graph.candidates_state import CandidatesState, RankedCandidate, VerifiedPlace
 from app.schemas.candidates import (
     CandidateTag,
     PlaceProvider,

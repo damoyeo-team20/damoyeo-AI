@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from app.core.config import get_settings
 from app.core.debug import record_debug  # TEMP DEBUG
 from app.core.llm import get_llm
-from app.graph.state import CandidatesState, PlaceCandidate, VerifiedPlace
+from app.graph.candidates_state import CandidatesState, PlaceCandidate, VerifiedPlace
 from app.prompts.n_candidate_place_verifier import CLASSIFY_SYSTEM_PROMPT, SEARCH_QUERY_TEMPLATE
 from app.services.serper_client import SerperResult, search as serper_search
 

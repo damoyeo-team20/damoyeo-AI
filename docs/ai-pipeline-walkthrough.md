@@ -204,7 +204,7 @@ Extractor가 실제 선호를 하나도 만들지 못한 경우도 Preference Gu
 
 ## 4단계 — 장소 후보 생성 (`POST /ai/meetings/{id}/candidates`)
 
-여기서부터가 실제로 하나의 LangGraph로 이어진 계산입니다(`app/graph/build_graph.py`). Back이 `meeting`(purpose/region), `confirmedSlot`(3단계 결과), `participants[].preferences`(1단계 결과 누적)를 한 번에 실어 보냅니다. 라우트와 그래프는 `participants[].userId` 경계를 그대로 보존합니다. 최종 문장은 여전히 특정 참여자를 지칭하지 않지만, 내부 계산에서는 각 참여자의 만족도를 따로 계산합니다.
+여기서부터가 실제로 하나의 LangGraph로 이어진 계산입니다(`app/graph/build_candidates_graph.py`). Back이 `meeting`(purpose/region), `confirmedSlot`(3단계 결과), `participants[].preferences`(1단계 결과 누적)를 한 번에 실어 보냅니다. 라우트와 그래프는 `participants[].userId` 경계를 그대로 보존합니다. 최종 문장은 여전히 특정 참여자를 지칭하지 않지만, 내부 계산에서는 각 참여자의 만족도를 따로 계산합니다.
 
 ### 4.1 Candidate Activity Decider — SearchPlan 생성
 

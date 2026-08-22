@@ -21,7 +21,7 @@ from app.graph.fairness import (
     PreferenceRelation,
     calculate_candidate_fairness,
 )
-from app.graph.state import CandidatesState, PlaceCandidate, RankedCandidate
+from app.graph.candidates_state import CandidatesState, PlaceCandidate, RankedCandidate
 from app.prompts.n_candidate_ranker import SYSTEM_PROMPT
 from app.schemas.candidates import CandidateTag, ParticipantInput
 

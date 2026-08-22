@@ -13,7 +13,7 @@ from app.graph.nodes.l_candidate_suggestion_builder import build_suggestions
 from app.graph.nodes.n_candidate_activity_decider import decide_activities
 from app.graph.nodes.n_candidate_place_verifier import verify_places
 from app.graph.nodes.n_candidate_ranker import rank_and_explain
-from app.graph.state import CandidatesState
+from app.graph.candidates_state import CandidatesState
 
 
 def _route_after_activity_decision(state: CandidatesState) -> str:

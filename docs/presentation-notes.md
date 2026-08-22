@@ -998,7 +998,7 @@ C: 매운 음식 강한 비선호
 
 - 참여자별 요청 스키마: `app/schemas/candidates.py`
 - 참여자 구조를 보존하는 라우트: `app/api/routes/meetings.py`
-- 참여자별 선호를 보관하는 그래프 상태: `app/graph/state.py`
+- 참여자별 선호를 보관하는 그래프 상태: `app/graph/candidates_state.py`
 - SearchPlan 1~4개 생성: `app/graph/nodes/n_candidate_activity_decider.py`, `app/prompts/n_candidate_activity_decider.py`
 - 계획별 후보를 균형 있게 합쳐 최대 15개로 제한: `app/graph/nodes/l_candidate_place_search.py`
 - `q`, `u`, `S`, `F`, 최종 점수를 계산하는 순수 Python 모듈: `app/graph/fairness.py`
@@ -1413,7 +1413,7 @@ initial 6개에서 usable 후보를 충분히 확보하면 호출을 크게 줄�
 - initial 6/fallback 3개씩·근거 정규화·3-state·공통 20초 deadline: `app/graph/nodes/n_candidate_place_verifier.py`
 - `FAIL` 제외와 기존 DTO 조립: `app/graph/nodes/l_candidate_suggestion_builder.py`
 - 후보 응답 DTO: `app/schemas/candidates.py`
-- 그래프 연결: `app/graph/build_graph.py`
+- 그래프 연결: `app/graph/build_candidates_graph.py`
 - 노드 실행 흐름: `docs/ai-pipeline-walkthrough.md`
 - Back↔AI 최종 계약: `docs/api-design2-backend.md`
 - 검증 fallback 테스트: `tests/graph/test_candidate_place_verifier.py`
