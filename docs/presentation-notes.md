@@ -410,7 +410,7 @@ Back에서 한 번 받은 목록을 프로세스 메모리에 캐시하지만 TT
 
 #### 6. 사전이 커질수록 프롬프트 비용이 증가한다
 
-HTTP 조회 결과는 캐시하지만 전체 Vocabulary 텍스트는 Extractor 호출마다 프롬프트에 들어간다. 실제 seed 데이터(`data/vocabulary_seed*.sql`)로 프롬프트에 들어가는 형식 그대로 만들어 Gemini 토크나이저로 실측한 결과는 다음과 같다.
+HTTP 조회 결과는 캐시하지만 전체 Vocabulary 텍스트는 Extractor 호출마다 프롬프트에 들어간다. 실제 seed 데이터(`data/vocabulary_seed.sql`)로 프롬프트에 들어가는 형식 그대로 만들어 Gemini 토크나이저로 실측한 결과는 다음과 같다.
 
 | 항목 수 | 텍스트 길이 | 토큰 수 |
 | --- | --- | --- |
@@ -480,7 +480,7 @@ Extractor는 두 값을 서로 다른 계층 코드로 보존하고, 후보 단�
 
 ### 1.12 코드 근거
 
-- Vocabulary seed와 계층: `data/vocabulary_seed.sql`, `data/vocabulary_seed_additions.sql`, `data/vocabulary_seed_additions_2.sql`
+- Vocabulary seed와 계층: `data/vocabulary_seed.sql`
 - Back Vocabulary 조회·캐시: `app/services/vocabulary_client.py`
 - 입력 범위 판별: `app/graph/nodes/n_preference_router.py`, `app/prompts/n_preference_router.py`
 - allowlist 검증·정규화와 메타데이터 보강: `app/graph/nodes/n_preference_extractor.py`
